@@ -1,5 +1,6 @@
 package com.nedmah.textlector.data.repository
 
+import com.nedmah.textlector.domain.model.TtsEngineType
 import com.nedmah.textlector.domain.model.UserPreferences
 import com.nedmah.textlector.domain.model.VoiceGender
 import com.nedmah.textlector.domain.repository.PreferencesRepository
@@ -25,7 +26,7 @@ class PreferencesRepositoryImpl(
         const val KEY_FONT_SIZE = "font_size"
         const val KEY_DARK_MODE = "dark_mode"
         const val KEY_LANGUAGE = "language"
-        const val KEY_USE_SHERPA = "use_sherpa_engine"
+        const val KEY_ENGINE_TYPE = "engine_type"
     }
 
     override suspend fun setVoiceProfile(type: VoiceGender) =
@@ -53,8 +54,8 @@ class PreferencesRepositoryImpl(
             settings.putString(KEY_LANGUAGE, language)
         }
 
-    override suspend fun setUseSherpaEngine(value: Boolean) =
-        withContext(Dispatchers.IO) { settings.putBoolean(KEY_USE_SHERPA, value) }
+    override suspend fun setEngineType(type: TtsEngineType) =
+        withContext(Dispatchers.IO) { settings.putString(KEY_ENGINE_TYPE, type.name) }
 
 
     @OptIn(ExperimentalSettingsApi::class)
@@ -69,16 +70,17 @@ class PreferencesRepositoryImpl(
             listOf(gender, speed.toString(), fontSize.toString(), darkMode.toString(), language)
         }
 
-        val useSherpa = settings.getBooleanFlow(KEY_USE_SHERPA, false)
+        val engineTypeFlow = settings.getStringFlow(KEY_ENGINE_TYPE, TtsEngineType.SYSTEM.name)
 
-        return combine(basicFlow, useSherpa) { basic, useSherpa ->
+        return combine(basicFlow, engineTypeFlow) { basic, engineTypeName ->
             UserPreferences(
                 speechVoice = VoiceGender.valueOf(basic[0]),
                 speechSpeed = basic[1].toFloatOrNull()?.takeIf { !it.isNaN() } ?: 1f,
                 fontSize = basic[2].toInt(),
                 isDarkMode = basic[3].toBooleanStrictOrNull(),
                 language = basic[4],
-                useSherpaEngine = useSherpa
+                engineType = runCatching { TtsEngineType.valueOf(engineTypeName) }
+                    .getOrDefault(TtsEngineType.SYSTEM)
             )
         }
     }

@@ -24,6 +24,7 @@ sherpaOnnx = "1.12.34"
 sqldelight = "2.0.2"
 navigation = "2.9.0-beta01"
 okio = "3.9.0"
+supertonicKmp = "0.1.0"
 tesseract4android = "4.9.0"
 uuid = "0.8.4"
 pdfbox-android = "2.0.27.0"
@@ -109,6 +110,9 @@ mlkit-text-recognition = { module = "com.google.mlkit:text-recognition", version
 tesseract4android = { module = "cz.adaptech.tesseract4android:tesseract4android", version.ref = "tesseract4android" }
 
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
+
+# supertonic tts
+supertonic-kmp = { module = "io.github.nedmah:supertonic-kmp", version.ref = "supertonicKmp" }
 
 [plugins]
 androidApplication = { id = "com.android.application", version.ref = "agp" }

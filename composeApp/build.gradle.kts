@@ -47,18 +47,6 @@ kotlin {
     jvmToolchain(21)
 
     sourceSets {
-        androidMain.dependencies {
-            implementation(libs.compose.uiToolingPreview)
-            implementation(libs.androidx.activity.compose)
-            implementation(libs.koin.android)
-            implementation(libs.sqldelight.androidDriver)
-            implementation(libs.sherpa.onnx.android)
-            implementation(libs.commons.compress.android)
-            implementation(project.dependencies.platform("com.google.firebase:firebase-bom:33.13.0"))
-            implementation(libs.firebase.crashlytics)
-            implementation(libs.firebase.analytics)
-            implementation(libs.tesseract4android)
-        }
         commonMain.dependencies {
             implementation(libs.compose.runtime)
             implementation(libs.compose.foundation)
@@ -97,8 +85,22 @@ kotlin {
 
             implementation(libs.synth.kmp.zip)
         }
+        androidMain.dependencies {
+            implementation(libs.compose.uiToolingPreview)
+            implementation(libs.androidx.activity.compose)
+            implementation(libs.koin.android)
+            implementation(libs.sqldelight.androidDriver)
+            implementation(libs.sherpa.onnx.android)
+            implementation(libs.commons.compress.android)
+            implementation(project.dependencies.platform("com.google.firebase:firebase-bom:33.13.0"))
+            implementation(libs.firebase.crashlytics)
+            implementation(libs.firebase.analytics)
+            implementation(libs.tesseract4android)
+            implementation(libs.supertonic.kmp)
+        }
         iosMain.dependencies {
             implementation(libs.sqldelight.nativeDriver)
+            implementation(libs.supertonic.kmp)
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
@@ -134,6 +136,13 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
+
+        // bc of the conflict between sherpa and supertonic
+        jniLibs {
+            pickFirsts += "lib/arm64-v8a/libonnxruntime.so"
+            pickFirsts += "lib/x86_64/libonnxruntime.so"
+            pickFirsts += "lib/armeabi-v7a/libonnxruntime.so"
         }
     }
     signingConfigs {

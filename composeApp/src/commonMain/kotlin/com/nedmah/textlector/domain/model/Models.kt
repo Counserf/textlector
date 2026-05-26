@@ -51,15 +51,20 @@ data class UserPreferences(
     val fontSize: Int,
     val isDarkMode: Boolean?,
     val language: String,
-    val useSherpaEngine: Boolean = false,
+    val engineType: TtsEngineType = TtsEngineType.SYSTEM,
 ) {
     fun resolveVoiceId(): VoiceId =
-        when {
-            this.language == "ru" && this.speechVoice == VoiceGender.MALE -> VoiceId.RU_MALE
-            this.language == "ru" && this.speechVoice == VoiceGender.FEMALE -> VoiceId.RU_FEMALE
-            this.language == "en" && this.speechVoice == VoiceGender.MALE -> VoiceId.EN_MALE
+        when (this.language) {
+            "ru" if this.speechVoice == VoiceGender.MALE -> VoiceId.RU_MALE
+            "ru" if this.speechVoice == VoiceGender.FEMALE -> VoiceId.RU_FEMALE
+            "en" if this.speechVoice == VoiceGender.MALE -> VoiceId.EN_MALE
             else -> VoiceId.EN_FEMALE
         }
+
+    val useSherpaEngine get() = engineType == TtsEngineType.PIPER
+    val useSupertonicEngine get() = engineType == TtsEngineType.SUPERTONIC
 }
 
 enum class VoiceGender { MALE, FEMALE}
+
+enum class TtsEngineType { SYSTEM, PIPER, SUPERTONIC }

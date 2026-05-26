@@ -47,8 +47,8 @@ class SwitchableTtsEngine(
 
         scope.launch(Dispatchers.IO) {
             preferencesRepository.getPreferences().collect { prefs ->
-                log("preferences received: useSherpa=${prefs.useSherpaEngine}, voice=${prefs.resolveVoiceId()}")
-                if (prefs.useSherpaEngine && active !== sherpaEngine) {
+                log("preferences received: useSherpa=${prefs.engineType}, voice=${prefs.resolveVoiceId()}")
+                if (prefs.engineType && active !== sherpaEngine) {
                     log("switching to Piper...")
                     active.stop()
                     active = sherpaEngine
@@ -59,7 +59,7 @@ class SwitchableTtsEngine(
                     log("TtsQueue created")
                     CrashReporter.log("Engine switched to Piper", tag = "SwitchableTtsEngine")
                     _engineChanged.tryEmit(Unit)
-                } else if (!prefs.useSherpaEngine && active !== nativeEngine) {
+                } else if (!prefs.engineType && active !== nativeEngine) {
                     log("switching to Native...")
                     active.stop()
                     active = nativeEngine
@@ -67,7 +67,7 @@ class SwitchableTtsEngine(
                     ttsQueue = null
                     CrashReporter.log("Engine switched to Native", tag = "SwitchableTtsEngine")
                     _engineChanged.tryEmit(Unit)
-                } else if (prefs.useSherpaEngine && active === sherpaEngine) {
+                } else if (prefs.engineType && active === sherpaEngine) {
                     val model = VoiceRegistry.getById(prefs.resolveVoiceId())
                     log("same engine (Piper), reloading voice: ${model.id}")
                     sherpaEngine.loadVoice(model)

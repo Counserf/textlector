@@ -55,7 +55,7 @@ class SettingsViewModel(
                 viewModelScope.launch { updatePreferencesUseCase.setLanguage(intent.language) }
 
             is SettingsIntent.SetAudioEngine ->
-                viewModelScope.launch { updatePreferencesUseCase.setUseSherpaEngine(intent.isEngine) }
+                viewModelScope.launch { updatePreferencesUseCase.setEngineType(intent.type) }
 
             is SettingsIntent.DownloadCurrentVoice -> downloadCurrentVoice()
             is SettingsIntent.DeleteCurrentVoice -> deleteCurrentVoice()
@@ -65,7 +65,7 @@ class SettingsViewModel(
     private fun observePreferences() {
         viewModelScope.launch {
             getPreferencesUseCase().collect { prefs ->
-                _state.update { it.copy(preferences = prefs, useSherpaEngine = prefs.useSherpaEngine) }
+                _state.update { it.copy(preferences = prefs, useSherpaEngine = prefs.engineType) }
                 observeVoiceState(prefs.resolveVoiceId())
             }
         }
