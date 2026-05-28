@@ -90,7 +90,6 @@ kotlin {
             implementation(libs.androidx.activity.compose)
             implementation(libs.koin.android)
             implementation(libs.sqldelight.androidDriver)
-            implementation(libs.sherpa.onnx.android)
             implementation(libs.commons.compress.android)
             implementation(project.dependencies.platform("com.google.firebase:firebase-bom:33.13.0"))
             implementation(libs.firebase.crashlytics)
@@ -137,13 +136,13 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
-
-        // bc of the conflict between sherpa and supertonic
         jniLibs {
             pickFirsts += "lib/arm64-v8a/libonnxruntime.so"
             pickFirsts += "lib/x86_64/libonnxruntime.so"
             pickFirsts += "lib/armeabi-v7a/libonnxruntime.so"
+            pickFirsts += "lib/x86/libonnxruntime.so"
         }
+
     }
     signingConfigs {
         create("release") {
@@ -170,6 +169,7 @@ android {
 
 dependencies {
     debugImplementation(libs.compose.uiTooling)
+    add("androidMainImplementation", fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar"))))
 }
 
 compose.desktop {

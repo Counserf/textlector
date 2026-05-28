@@ -24,6 +24,7 @@ actual val platformModule = module {
         SwitchableTtsEngine(
             nativeEngine = IosTtsEngine(),
             sherpaEngine = IosEngineHolder.sherpaEngine ?: error("SherpaEngine not initialized"),
+            supertonicEngine = IosEngineHolder.supertonicEngine ?: error("SupertonicEngine not initialized"),
             preferencesRepository = get()
         )
     }

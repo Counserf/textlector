@@ -40,10 +40,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.nedmah.textlector.domain.model.TtsEngineType
 import com.nedmah.textlector.domain.model.VoiceGender
 import com.nedmah.textlector.ui.presentation.settings.components.EngineRow
 import com.nedmah.textlector.ui.presentation.settings.components.FontSizeOption
 import com.nedmah.textlector.ui.presentation.settings.components.SettingsSection
+import com.nedmah.textlector.ui.presentation.settings.components.SupertonicDownloadBanner
 import com.nedmah.textlector.ui.presentation.settings.components.VoiceDownloadBanner
 import org.jetbrains.compose.resources.painterResource
 import org.jetbrains.compose.resources.stringResource
@@ -58,6 +60,8 @@ import textlector.composeapp.generated.resources.settings_dark_mode
 import textlector.composeapp.generated.resources.settings_engine_piper_subtitle
 import textlector.composeapp.generated.resources.settings_engine_piper_title
 import textlector.composeapp.generated.resources.settings_engine_subtitle
+import textlector.composeapp.generated.resources.settings_engine_supertonic_subtitle
+import textlector.composeapp.generated.resources.settings_engine_supertonic_title
 import textlector.composeapp.generated.resources.settings_engine_system_subtitle
 import textlector.composeapp.generated.resources.settings_engine_system_title
 import textlector.composeapp.generated.resources.settings_engine_title
@@ -116,10 +120,10 @@ fun SettingsScreenRoot(
                 EngineRow(
                     title = stringResource(Res.string.settings_engine_system_title),
                     subtitle = stringResource(Res.string.settings_engine_system_subtitle),
-                    isSelected = !state.useSherpaEngine,
+                    isSelected = state.engineType == TtsEngineType.SYSTEM,
                     isAvailable = true,
                     onClick = {
-                        viewModel.onIntent(SettingsIntent.SetAudioEngine(false))
+                        viewModel.onIntent(SettingsIntent.SetAudioEngine(TtsEngineType.SYSTEM))
                         showEngineSheet = false
                     }
                 )
@@ -130,10 +134,24 @@ fun SettingsScreenRoot(
                 EngineRow(
                     title = stringResource(Res.string.settings_engine_piper_title),
                     subtitle = stringResource(Res.string.settings_engine_piper_subtitle),
-                    isSelected = state.useSherpaEngine,
+                    isSelected = state.engineType == TtsEngineType.PIPER,
                     isAvailable = true,
                     onClick = {
-                        viewModel.onIntent(SettingsIntent.SetAudioEngine(true))
+                        viewModel.onIntent(SettingsIntent.SetAudioEngine(TtsEngineType.PIPER))
+                        showEngineSheet = false
+                    }
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Supertonic
+                EngineRow(
+                    title = stringResource(Res.string.settings_engine_supertonic_title),
+                    subtitle = stringResource(Res.string.settings_engine_supertonic_subtitle),
+                    isSelected = state.engineType == TtsEngineType.SUPERTONIC,
+                    isAvailable = true,
+                    onClick = {
+                        viewModel.onIntent(SettingsIntent.SetAudioEngine(TtsEngineType.SUPERTONIC))
                         showEngineSheet = false
                     }
                 )
@@ -229,13 +247,24 @@ private fun SettingsScreen(
             }
         }
 
-        if (state.useSherpaEngine) {
+        when (state.engineType) {
+            TtsEngineType.PIPER -> {
             Spacer(modifier = Modifier.height(12.dp))
             VoiceDownloadBanner(
                 voiceState = state.currentVoiceState,
-                onDownload = { onIntent(SettingsIntent.DownloadCurrentVoice) },
-                onDelete = { onIntent(SettingsIntent.DeleteCurrentVoice) }
+                onDownload = { onIntent(SettingsIntent.DownloadSherpaVoice) },
+                onDelete = { onIntent(SettingsIntent.DeleteSherpaVoice) }
             )
+            }
+            TtsEngineType.SUPERTONIC -> {
+                Spacer(modifier = Modifier.height(12.dp))
+                SupertonicDownloadBanner(
+                    downloadState = state.supertonicDownloadState,
+                    onDownload = { onIntent(SettingsIntent.DownloadSupertonic) },
+                    onDelete = { onIntent(SettingsIntent.DeleteSupertonic) }
+                )
+            }
+            TtsEngineType.SYSTEM -> {}
         }
 
         Spacer(modifier = Modifier.height(24.dp))

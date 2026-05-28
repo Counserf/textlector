@@ -2,6 +2,8 @@ package com.nedmah.textlector.common.platform.tts
 
 import com.nedmah.textlector.common.platform.logging.CrashReporter
 import com.nedmah.textlector.domain.model.Paragraph
+import com.nedmah.textlector.domain.model.TtsEngineType
+import com.nedmah.textlector.domain.model.UserPreferences
 import com.nedmah.textlector.domain.model.VoiceModel
 import com.nedmah.textlector.domain.model.VoiceRegistry
 import com.nedmah.textlector.domain.repository.PreferencesRepository
@@ -24,9 +26,24 @@ private fun log(message: String) {
     if (ENGINE_LOGS) println("[SwitchableTtsEngine] $message")
 }
 
+/**
+ * Single entry point for TTS in the app.
+ *
+ * Switches between three engines depending on [UserPreferences.engineType]:
+ * - [TtsEngineType.SYSTEM] — Android system TTS, no buffering
+ * - [TtsEngineType.PIPER] — offline VITS via sherpa-onnx, with [TtsQueue]
+ * - [TtsEngineType.SUPERTONIC] — offline neural TTS via supertonic-kmp, with [TtsQueue]
+ *
+ * Both ONNX engines implement [SherpaOnnxTtsEngine] and work through the same
+ * [TtsQueue] — prefetches the next paragraph while the current one is playing.
+ *
+ * Switching occurs reactively by subscribing to [PreferencesRepository.getPreferences].
+ * When the engine changes, [engineChanged] is emitted — [com.nedmah.textlector.ui.presentation.player.PlayerViewModel] restarts playback.
+ */
 class SwitchableTtsEngine(
     private val nativeEngine: TtsEngine,
     private val sherpaEngine: SherpaOnnxTtsEngine,
+    private val supertonicEngine: SherpaOnnxTtsEngine,
     private val preferencesRepository: PreferencesRepository
 ) : TtsEngine {
 
@@ -47,39 +64,18 @@ class SwitchableTtsEngine(
 
         scope.launch(Dispatchers.IO) {
             preferencesRepository.getPreferences().collect { prefs ->
-                log("preferences received: useSherpa=${prefs.engineType}, voice=${prefs.resolveVoiceId()}")
-                if (prefs.engineType && active !== sherpaEngine) {
-                    log("switching to Piper...")
-                    active.stop()
-                    active = sherpaEngine
-                    val model = VoiceRegistry.getById(prefs.resolveVoiceId())
-                    log("loading voice: ${model.id}")
-                    sherpaEngine.loadVoice(model)
-                    ttsQueue = TtsQueue(sherpaEngine)
-                    log("TtsQueue created")
-                    CrashReporter.log("Engine switched to Piper", tag = "SwitchableTtsEngine")
-                    _engineChanged.tryEmit(Unit)
-                } else if (!prefs.engineType && active !== nativeEngine) {
-                    log("switching to Native...")
-                    active.stop()
-                    active = nativeEngine
-                    ttsQueue?.shutdown()
-                    ttsQueue = null
-                    CrashReporter.log("Engine switched to Native", tag = "SwitchableTtsEngine")
-                    _engineChanged.tryEmit(Unit)
-                } else if (prefs.engineType && active === sherpaEngine) {
-                    val model = VoiceRegistry.getById(prefs.resolveVoiceId())
-                    log("same engine (Piper), reloading voice: ${model.id}")
-                    sherpaEngine.loadVoice(model)
-                    if (ttsQueue == null) ttsQueue = TtsQueue(sherpaEngine)
-                }
+                handleEngineSwitch(prefs)
             }
         }
     }
 
+    /**
+     * Delegates only to the active engine if it is a [SherpaOnnxTtsEngine].
+     * Called from [com.nedmah.textlector.ui.presentation.settings.SettingsViewModel] after the model has loaded.
+     */
     override suspend fun loadVoice(model: VoiceModel) {
         log("loadVoice: ${model.id}")
-        sherpaEngine.loadVoice(model)
+        (active as? SherpaOnnxTtsEngine)?.loadVoice(model)
     }
 
     override fun setPlaylist(paragraphs: List<Paragraph>) {
@@ -87,8 +83,16 @@ class SwitchableTtsEngine(
         this.paragraphs = paragraphs
         nativeEngine.setPlaylist(paragraphs)
         sherpaEngine.setPlaylist(paragraphs)
+        supertonicEngine.setPlaylist(paragraphs)
     }
 
+    /**
+     * Plays paragraph [index].
+     *
+     * If the ONNX engine is active, it takes audio from the [TtsQueue] (cache or generated),
+     * then runs a prefetch of the next paragraph in the background.
+     * If the SYSTEM engine is active, it delegates directly without buffering.
+     */
     override suspend fun speak(index: Int, speed: Float) {
         val queue = ttsQueue
         log("speak: index=$index, speed=$speed, queue=${if (queue != null) "Piper" else "Native"}, paragraphs=${paragraphs.size}")
@@ -115,7 +119,7 @@ class SwitchableTtsEngine(
 
             log("speak: audio ready, size=${audio.size}b, starting prefetch and playback")
             queue.prefetchAhead(index, paragraphs, speed)
-            sherpaEngine.playAudio(audio)
+            (active as SherpaOnnxTtsEngine).playAudio(audio)
             log("speak: playAudio finished for index=$index")
         } else {
             log("speak: native path for index=$index")
@@ -137,6 +141,41 @@ class SwitchableTtsEngine(
         scope.coroutineContext[Job]?.cancel()
         nativeEngine.shutdown()
         sherpaEngine.shutdown()
+        supertonicEngine.shutdown()
     }
 
+    private suspend fun handleEngineSwitch(prefs : UserPreferences) {
+        val targetEngine = when(prefs.engineType){
+            TtsEngineType.SYSTEM -> nativeEngine
+            TtsEngineType.PIPER -> sherpaEngine
+            TtsEngineType.SUPERTONIC -> supertonicEngine
+        }
+
+        // if voice or language was changed
+        if (active === targetEngine) {
+            if (targetEngine is SherpaOnnxTtsEngine) {  // supertonic implements SherpaOnnxTtsEngine too
+                val model = VoiceRegistry.getById(prefs.resolveVoiceId())
+                targetEngine.loadVoice(model)
+                if (ttsQueue == null) ttsQueue = TtsQueue(targetEngine)
+            }
+            return
+        }
+
+        log("switching to ${prefs.engineType}...")
+        active.stop()
+        active = targetEngine
+
+        if (targetEngine is SherpaOnnxTtsEngine) {
+            val model = VoiceRegistry.getById(prefs.resolveVoiceId())
+            targetEngine.loadVoice(model)
+            ttsQueue?.shutdown()
+            ttsQueue = TtsQueue(targetEngine)
+        } else {
+            ttsQueue?.shutdown()
+            ttsQueue = null
+        }
+
+        CrashReporter.log("Engine switched to ${prefs.engineType}", tag = "SwitchableTtsEngine")
+        _engineChanged.tryEmit(Unit)
+    }
 }

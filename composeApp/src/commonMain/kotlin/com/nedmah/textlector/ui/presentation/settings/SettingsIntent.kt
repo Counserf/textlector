@@ -17,6 +17,8 @@ interface SettingsIntent {
 
     data class SetAudioEngine(val type : TtsEngineType) : SettingsIntent
 
-    data object DownloadCurrentVoice : SettingsIntent
-    data object DeleteCurrentVoice : SettingsIntent
+    data object DownloadSherpaVoice : SettingsIntent
+    data object DeleteSherpaVoice : SettingsIntent
+    object DownloadSupertonic : SettingsIntent
+    object DeleteSupertonic : SettingsIntent
 }

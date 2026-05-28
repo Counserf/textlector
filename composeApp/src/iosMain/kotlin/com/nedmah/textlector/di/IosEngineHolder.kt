@@ -8,6 +8,7 @@ import com.nedmah.textlector.common.platform.tts.SherpaOnnxTtsEngine
 
 object IosEngineHolder {
     var sherpaEngine: SherpaOnnxTtsEngine? = null
+    var supertonicEngine: SherpaOnnxTtsEngine? = null
     var tarExtractor: TarExtractor? = null
     var fileDownloader : FileDownloader? = null
     var pdfExtractor: PdfPageExtractor? = null

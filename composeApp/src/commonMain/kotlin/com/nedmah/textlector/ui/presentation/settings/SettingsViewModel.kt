@@ -6,6 +6,7 @@ import com.nedmah.textlector.common.platform.tts.TtsEngine
 import com.nedmah.textlector.domain.model.ModelState
 import com.nedmah.textlector.domain.model.VoiceId
 import com.nedmah.textlector.domain.model.VoiceRegistry
+import com.nedmah.textlector.domain.repository.SupertonicRepository
 import com.nedmah.textlector.domain.repository.VoiceModelRepository
 import com.nedmah.textlector.domain.usecase.GetPreferencesUseCase
 import com.nedmah.textlector.domain.usecase.UpdatePreferencesUseCase
@@ -23,6 +24,7 @@ class SettingsViewModel(
     private val downloadVoiceModelUseCase: DownloadVoiceModelUseCase,
     private val deleteVoiceModelUseCase: DeleteVoiceModelUseCase,
     private val modelRepository: VoiceModelRepository,
+    private val supertonicRepository: SupertonicRepository,
     private val ttsEngine: TtsEngine
 ) : ViewModel() {
 
@@ -35,6 +37,7 @@ class SettingsViewModel(
 
     init {
         observePreferences()
+        observeSupertonicState()
     }
 
     fun onIntent(intent: com.nedmah.textlector.ui.presentation.settings.SettingsIntent) {
@@ -57,16 +60,26 @@ class SettingsViewModel(
             is SettingsIntent.SetAudioEngine ->
                 viewModelScope.launch { updatePreferencesUseCase.setEngineType(intent.type) }
 
-            is SettingsIntent.DownloadCurrentVoice -> downloadCurrentVoice()
-            is SettingsIntent.DeleteCurrentVoice -> deleteCurrentVoice()
+            is SettingsIntent.DownloadSherpaVoice -> downloadSherpaVoice()
+            is SettingsIntent.DeleteSherpaVoice -> deleteSherpaVoice()
+            is SettingsIntent.DownloadSupertonic -> downloadSupertonic()
+            is SettingsIntent.DeleteSupertonic -> deleteSupertonic()
         }
     }
 
     private fun observePreferences() {
         viewModelScope.launch {
             getPreferencesUseCase().collect { prefs ->
-                _state.update { it.copy(preferences = prefs, useSherpaEngine = prefs.engineType) }
+                _state.update { it.copy(preferences = prefs) }
                 observeVoiceState(prefs.resolveVoiceId())
+            }
+        }
+    }
+
+    private fun observeSupertonicState() {
+        viewModelScope.launch {
+            supertonicRepository.downloadState.collect { downloadState ->
+                _state.update { it.copy(supertonicDownloadState = downloadState) }
             }
         }
     }
@@ -80,7 +93,7 @@ class SettingsViewModel(
         }
     }
 
-    private fun downloadCurrentVoice() {
+    private fun downloadSherpaVoice() {
         if (downloadJob?.isActive == true) return
         val id = currentVoiceId() ?: return
         downloadJob = viewModelScope.launch {
@@ -95,14 +108,29 @@ class SettingsViewModel(
         }
     }
 
-    private fun deleteCurrentVoice() {
+    private fun deleteSherpaVoice() {
         viewModelScope.launch {
             val id = currentVoiceId() ?: return@launch
             deleteVoiceModelUseCase(id)
         }
     }
 
-    private fun currentVoiceId(): VoiceId? {
+    private fun downloadSupertonic(){
+        if (downloadJob?.isActive == true) return
+        downloadJob = viewModelScope.launch {
+            supertonicRepository.download().collect { downloadState ->
+                _state.update { it.copy(supertonicDownloadState = downloadState) }
+            }
+        }
+    }
+
+    private fun deleteSupertonic() {
+        viewModelScope.launch {
+            supertonicRepository.deleteModel()
+        }
+    }
+
+    private fun currentVoiceId(): VoiceId {
         val prefs = _state.value.preferences
         return prefs.resolveVoiceId()
     }

@@ -13,6 +13,11 @@ object AndroidTrackPlayer {
         playPcm(samples, sampleRate, trackRef)
     }
 
+    fun play(samples: FloatArray, sampleRate: Int, trackRef: (AudioTrack) -> Unit) {
+        if (samples.isEmpty()) return
+        playPcm(samples, sampleRate, trackRef)
+    }
+
     fun stop(track: AudioTrack?) {
         track?.apply {
             pause()
@@ -60,7 +65,7 @@ object AndroidTrackPlayer {
         if (track.playState == AudioTrack.PLAYSTATE_PLAYING) track.stop()
     }
 
-    private fun samplesToWav(samples: FloatArray, sampleRate: Int): ByteArray {
+    internal fun samplesToWav(samples: FloatArray, sampleRate: Int): ByteArray {
         val pcm = ByteArray(samples.size * 2)
         samples.forEachIndexed { i, sample ->
             val s = (sample.coerceIn(-1f, 1f) * Short.MAX_VALUE).toInt().toShort()

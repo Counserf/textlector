@@ -76,6 +76,8 @@
     <string name="settings_engine_system_subtitle">Использует встроенный голос устройства</string>
     <string name="settings_engine_piper_title">Piper</string>
     <string name="settings_engine_piper_subtitle">Высококачественный офлайн нейронный TTS</string>
+    <string name="settings_engine_supertonic_title">Супертоник</string>
+    <string name="settings_engine_supertonic_subtitle">Лучшее качество нейронного синтеза речи (~380 МБ)</string>
     <string name="settings_voice_language">Язык чтения</string>
     <string name="settings_voice_male">Мужской</string>
     <string name="settings_voice_female">Женский</string>
@@ -83,7 +85,7 @@
     <!-- Voice Model -->
     <string name="voice_model_ready">Голосовая модель готова</string>
     <string name="voice_model_not_downloaded">Голосовая модель не скачана</string>
-    <string name="voice_model_downloading">Загрузка... %1$d%%</string>
+    <string name="voice_model_downloading">Загрузка... %1$d%</string>
     <string name="voice_model_download_failed">Ошибка загрузки</string>
 
     <!-- Delete Dialog -->

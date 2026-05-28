@@ -33,13 +33,13 @@ A free, offline text-to-speech reader for Android and iOS, built with Kotlin Mul
 
 ## TTS Architecture
 
-TextLector uses a two-tier TTS system:
+TextLector uses a three-tier TTS system:
 
 **Phase 1 — Native TTS (default)**
 Android `TextToSpeech` and iOS `AVSpeechSynthesizer` — available immediately, no downloads.
 
 **Phase 2 — Neural TTS via Piper / sherpa-onnx**
-[sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) bundles a pre-compiled ONNX Runtime and eSpeak-NG, which means no manual C++ compilation or model conversion. Piper VITS models (~63MB each) are downloaded on demand from HuggingFace and stored locally.
+[sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) bundles a pre-compiled ONNX Runtime and eSpeak-NG. Piper VITS models (~63 MB each) are downloaded on demand from HuggingFace and stored locally.
 
 Supported voices:
 | Voice | Language | Gender |
@@ -49,29 +49,32 @@ Supported voices:
 | Ryan | English | Male |
 | Lessac | English | Female |
 
-The switch between native and neural TTS happens at runtime through `SwitchableTtsEngine` — no app restart required.
+**Phase 3 — Neural TTS via Supertonic**
+[supertonic-kmp](https://github.com/nedmah/supertonic-kmp) — a KMP wrapper around [Supertonic v3](https://github.com/supertone-inc/supertonic) by Supertone Inc. Flow-matching neural synthesis, 31 languages, 10 bundled voice presets (M1–M5, F1–F5). One-time model download (~265 MB), then fully offline.
 
-**Why sherpa-onnx over self-built Piper:**
-Building Piper from source requires cross-compiling eSpeak-NG and ONNX Runtime for each target (arm64-v8a, x86_64, iOS arm64). sherpa-onnx ships pre-built XCFramework and AAR with all native libs included, reducing integration to a dependency declaration.
- 
+Compared to Piper: higher naturalness, broader language coverage, but slower generation on mobile CPU. Tune `inferenceSteps` (2–12) to trade quality for speed.
+
+All three engines share a single `SwitchableTtsEngine` interface. Switching happens at runtime — no app restart required. ONNX-based engines (Piper and Supertonic) use a shared `TtsQueue` that prefetches the next paragraph in background while the current one is playing.
+
+**Known limitation:** sherpa-onnx and supertonic-kmp both bundle `libonnxruntime.so`. This is resolved via `jniLibs.pickFirsts` in `build.gradle.kts` combined with the static-link sherpa-onnx AAR (`sherpa-onnx-static-link-onnxruntime-1.12.34.aar`) which embeds ORT statically, eliminating the symbol conflict.
 ---
 
 ## Tech Stack
 
-| Layer         | Technology                                       |
-|---------------|--------------------------------------------------|
-| UI            | Compose Multiplatform                            |
-| Architecture  | MVI + ViewModel (commonMain)                     |
-| DI            | Koin Multiplatform                               |
-| Navigation    | Navigation Compose CMP (Nav2.8, typesafe routes) |
-| Database      | SQLDelight 2.x                                   |
-| Preferences   | multiplatform-settings                           |
-| File I/O      | okio                                             |
-| HTTP          | Ktor Client 3.x                                  |
-| HTML parsing  | Ksoup (Jsoup KMP port)                           |
-| Neural TTS    | sherpa-onnx + Piper VITS models                  |
-| PDF (Android) | PdfBox-Android                                   |
-| PDF (iOS)     | PDFKit + Vision OCR fallback                     |
+| Layer         | Technology                                                |
+|---------------|-----------------------------------------------------------|
+| UI            | Compose Multiplatform                                     |
+| Architecture  | MVI + ViewModel (commonMain)                              |
+| DI            | Koin Multiplatform                                        |
+| Navigation    | Navigation Compose CMP (Nav2.8, typesafe routes)          |
+| Database      | SQLDelight 2.x                                            |
+| Preferences   | multiplatform-settings                                    |
+| File I/O      | okio                                                      |
+| HTTP          | Ktor Client 3.x                                           |
+| HTML parsing  | Ksoup (Jsoup KMP port)                                    |
+| Neural TTS    | sherpa-onnx (Piper VITS) + supertonic-kmp (Supertonic v3) |
+| PDF (Android) | PdfBox-Android                                            |
+| PDF (iOS)     | PDFKit + Vision OCR fallback                              |
  
 ---
 
@@ -131,7 +134,8 @@ Open `iosApp/iosApp.xcodeproj` in Xcode and run on a simulator or device.
 - [x] URL import
 - [x] Native TTS (Android + iOS)
 - [x] Neural TTS via Piper / sherpa-onnx (Android + iOS)
-- [ ] Camera / OCR import
+- [x] Camera / OCR import
+- [x] Neural TTS via Supertonic — 31 languages, flow-matching
 - [ ] JVM / Desktop support
 - [ ] Background playback (MediaSession / AVAudioSession)
 ---

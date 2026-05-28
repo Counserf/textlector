@@ -7,7 +7,9 @@ struct iOSApp: App {
     init() {
         let repo = IosVoiceModelRepositoryImpl()
         let sherpaEngine = IosSherpaEngine(repository: repo)
+        let supertonicEngine = IosSupertonicEngine()
         IosEngineHolder.shared.sherpaEngine = sherpaEngine
+        IosEngineHolder.shared.supertonicEngine = supertonicEngine
         IosEngineHolder.shared.tarExtractor = IosTarExtractor()
         IosEngineHolder.shared.ocrEngine = IosOcrEngine()
         IosEngineHolder.shared.fileDownloader = IosFileDownloader()
