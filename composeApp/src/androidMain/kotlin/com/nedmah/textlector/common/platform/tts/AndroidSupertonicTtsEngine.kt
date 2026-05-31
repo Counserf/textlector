@@ -1,9 +1,7 @@
 package com.nedmah.textlector.common.platform.tts
 
-import android.content.Context
 import android.media.AudioTrack
 import com.nedmah.supertonic_kmp.api.GenerateResult
-import com.nedmah.supertonic_kmp.api.SupertonicConfig
 import com.nedmah.supertonic_kmp.api.SupertonicTts
 import com.nedmah.supertonic_kmp.api.SupertonicVoice
 import com.nedmah.textlector.common.platform.logging.CrashReporter
@@ -11,13 +9,11 @@ import com.nedmah.textlector.domain.model.Paragraph
 import com.nedmah.textlector.domain.model.VoiceGender
 import com.nedmah.textlector.domain.model.VoiceModel
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 
 class AndroidSupertonicTtsEngine(
     private val tts: SupertonicTts
 ) : SherpaOnnxTtsEngine {
-
 
     private var audioTrack: AudioTrack? = null
 

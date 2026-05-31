@@ -95,7 +95,11 @@ class SwitchableTtsEngine(
      */
     override suspend fun speak(index: Int, speed: Float) {
         val queue = ttsQueue
-        log("speak: index=$index, speed=$speed, queue=${if (queue != null) "Piper" else "Native"}, paragraphs=${paragraphs.size}")
+        log("speak: index=$index, speed=$speed, queue=${when {
+            queue != null && active === supertonicEngine -> "Supertonic"
+            queue != null -> "Piper"
+            else -> "Native"
+        }}, paragraphs=${paragraphs.size}")
 
         if (queue != null) {
             if (index >= paragraphs.size) {
@@ -129,7 +133,11 @@ class SwitchableTtsEngine(
     }
 
     override fun stop() {
-        log("stop() called, active=${if (active === sherpaEngine) "Piper" else "Native"}")
+        log("stop() called, active=${when (active) {
+            sherpaEngine -> "Piper"
+            supertonicEngine -> "Supertonic"
+            else -> "Native"
+        }}")
         ttsQueue?.clear()
         active.stop()
         // don't emit buffering false here because it interrupts, pause() in playerVM already cancels loading

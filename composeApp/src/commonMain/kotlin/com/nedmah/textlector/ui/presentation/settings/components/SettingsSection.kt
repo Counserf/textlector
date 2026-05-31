@@ -35,6 +35,8 @@ import textlector.composeapp.generated.resources.action_delete
 import textlector.composeapp.generated.resources.action_download
 import textlector.composeapp.generated.resources.action_retry
 import textlector.composeapp.generated.resources.ic_success
+import textlector.composeapp.generated.resources.settings_engine_supertonic_not_downloaded
+import textlector.composeapp.generated.resources.settings_engine_supertonic_title
 import textlector.composeapp.generated.resources.voice_model_download_failed
 import textlector.composeapp.generated.resources.voice_model_downloading
 import textlector.composeapp.generated.resources.voice_model_not_downloaded
@@ -241,20 +243,20 @@ fun SupertonicDownloadBanner(
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = "Supertonic voice model",
+                text = stringResource(Res.string.settings_engine_supertonic_title),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface
             )
             Spacer(modifier = Modifier.height(2.dp))
             Text(
                 text = when (downloadState) {
-                    is SupertonicModelState.NotDownloaded -> "~265 MB · not downloaded"
+                    is SupertonicModelState.NotDownloaded -> stringResource(Res.string.settings_engine_supertonic_not_downloaded)
                     is SupertonicModelState.Downloading -> {
                         val downloaded = downloadState.bytesDownloaded / 1_048_576L
                         val total = downloadState.totalBytes / 1_048_576L
                         "$downloaded MB / $total MB"
                     }
-                    is SupertonicModelState.Ready -> "Ready"
+                    is SupertonicModelState.Ready -> stringResource(Res.string.voice_model_ready)
                     is SupertonicModelState.Error -> "Error: ${downloadState.message}"
                 },
                 style = MaterialTheme.typography.bodySmall,
@@ -284,7 +286,7 @@ fun SupertonicDownloadBanner(
             is SupertonicModelState.NotDownloaded,
             is SupertonicModelState.Error -> {
                 Text(
-                    text = "Download",
+                    text = stringResource(Res.string.action_download),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier
@@ -302,7 +304,7 @@ fun SupertonicDownloadBanner(
             }
             is SupertonicModelState.Ready -> {
                 Text(
-                    text = "Delete",
+                    text = stringResource(Res.string.action_delete),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.error,
                     modifier = Modifier
