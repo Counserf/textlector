@@ -37,14 +37,28 @@ fun ParagraphItem(
 ) {
 
     val highlightColor = LocalHighlightColor.current
+    val primary = MaterialTheme.colorScheme.primary
+    val onBackground = MaterialTheme.colorScheme.onBackground
+    val onPrimaryContainer = MaterialTheme.colorScheme.onPrimaryContainer
+
+    val animSpec = tween<Color>(durationMillis = 300)
 
     val backgroundColor by animateColorAsState(
-        targetValue = if (isHighlighted)
-            highlightColor
-        else
-            Color.Transparent,
-        animationSpec = tween(durationMillis = 300),
+        targetValue = if (isHighlighted) highlightColor else Color.Transparent,
+        animationSpec = animSpec,
         label = "paragraph_bg"
+    )
+
+    val accentColor by animateColorAsState(
+        targetValue = if (isHighlighted) primary else Color.Transparent,
+        animationSpec = animSpec,
+        label = "paragraph_accent"
+    )
+
+    val textColor by animateColorAsState(
+        targetValue = if (isHighlighted) onPrimaryContainer else onBackground,
+        animationSpec = animSpec,
+        label = "paragraph_text"
     )
 
     Row(
@@ -60,10 +74,7 @@ fun ParagraphItem(
                 .width(3.dp)
                 .fillMaxHeight()
                 .background(
-                    color = if (isHighlighted)
-                        MaterialTheme.colorScheme.primary
-                    else
-                        Color.Transparent,
+                    color = accentColor,
                     shape = RoundedCornerShape(2.dp)
                 )
         )
@@ -74,10 +85,7 @@ fun ParagraphItem(
             text = paragraph.text,
             style = MaterialTheme.typography.bodyLarge,
             fontSize = fontSize.sp,
-            color = if (isHighlighted)
-                MaterialTheme.colorScheme.onPrimaryContainer
-            else
-                MaterialTheme.colorScheme.onBackground,
+            color = textColor,
             lineHeight = 28.sp
         )
     }

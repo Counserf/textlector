@@ -2,23 +2,23 @@ package com.nedmah.textlector.common.platform.ocr
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.ImageDecoder
-import android.os.Build
-import android.provider.MediaStore
 import android.graphics.Canvas
 import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
+import android.graphics.ImageDecoder
 import android.graphics.Paint
+import android.os.Build
+import android.provider.MediaStore
 import android.util.Log
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import androidx.core.graphics.createBitmap
+import androidx.core.graphics.scale
 import androidx.core.net.toUri
 import com.googlecode.tesseract.android.TessBaseAPI
 import com.nedmah.textlector.domain.repository.OcrDataRepository
-import androidx.core.graphics.createBitmap
-import androidx.core.graphics.scale
 import com.nedmah.textlector.domain.repository.PreferencesRepository
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 
 class AndroidOcrEngine(
     private val context: Context,

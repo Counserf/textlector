@@ -1,7 +1,5 @@
 package com.nedmah.textlector.common.platform.tts
 
-import android.media.AudioAttributes
-import android.media.AudioFormat
 import android.media.AudioTrack
 import com.k2fsa.sherpa.onnx.OfflineTts
 import com.k2fsa.sherpa.onnx.OfflineTtsConfig

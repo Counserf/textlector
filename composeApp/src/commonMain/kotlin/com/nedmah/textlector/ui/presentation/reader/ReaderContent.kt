@@ -24,13 +24,11 @@ fun ReaderContent(
 
     val listState = rememberLazyListState()
 
-    LaunchedEffect(currentParagraphIndex, isPlaying) {
-        if (isPlaying) {
-            listState.animateScrollToItem(
-                index = currentParagraphIndex,
-                scrollOffset = -200
-            )
-        }
+    LaunchedEffect(currentParagraphIndex) {
+        listState.animateScrollToItem(
+            index = currentParagraphIndex,
+            scrollOffset = -200
+        )
     }
 
     LazyColumn(
