@@ -1,5 +1,8 @@
 package com.nedmah.textlector.ui.presentation.reader.components
 
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.ExperimentalAnimationApi
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -35,13 +38,14 @@ import textlector.composeapp.generated.resources.ic_play
 import textlector.composeapp.generated.resources.ic_skip_next
 import textlector.composeapp.generated.resources.ic_skip_prev
 
+@OptIn(ExperimentalAnimationApi::class)
 @Composable
 fun PlayerControls(
     isPlaying: Boolean,
     playbackSpeed: Float,
     progress: Float,
     isEnabled: Boolean,
-    isLoading : Boolean,
+    isLoading: Boolean,
     elapsed: String,
     remaining: String,
     canGoPrevious: Boolean,
@@ -126,7 +130,7 @@ fun PlayerControls(
                             .clip(CircleShape)
                             .background(MaterialTheme.colorScheme.primary)
                             .clickable(enabled = isEnabled)
-                                { if (isPlaying) onPause() else onPlay() },
+                            { if (isPlaying) onPause() else onPlay() },
                         contentAlignment = Alignment.Center
                     ) {
                         if (isLoading) {
@@ -135,16 +139,21 @@ fun PlayerControls(
                                 color = Color.White,
                                 strokeWidth = 2.dp
                             )
-                        }
-                        else Icon(
-                            painter = painterResource(
-                                if (isPlaying) Res.drawable.ic_pause
-                                else Res.drawable.ic_play
-                            ),
-                            contentDescription = if (isPlaying) "Pause" else "Play",
-                            tint = Color.White,
-                            modifier = Modifier.size(24.dp)
-                        )
+                        } else
+                            Crossfade(
+                                targetState = isPlaying,
+                                animationSpec = tween(200)
+                            ) { playing ->
+                                Icon(
+                                    painter = painterResource(
+                                        if (playing) Res.drawable.ic_pause
+                                        else Res.drawable.ic_play
+                                    ),
+                                    contentDescription = if (playing) "Pause" else "Play",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
                     }
 
                     IconButton(

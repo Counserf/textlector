@@ -11,7 +11,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -25,6 +27,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nedmah.textlector.domain.model.ModelState
+import com.nedmah.textlector.domain.model.SupertonicModelState
 import org.jetbrains.compose.resources.painterResource
 import org.jetbrains.compose.resources.stringResource
 import textlector.composeapp.generated.resources.Res
@@ -32,6 +35,8 @@ import textlector.composeapp.generated.resources.action_delete
 import textlector.composeapp.generated.resources.action_download
 import textlector.composeapp.generated.resources.action_retry
 import textlector.composeapp.generated.resources.ic_success
+import textlector.composeapp.generated.resources.settings_engine_supertonic_not_downloaded
+import textlector.composeapp.generated.resources.settings_engine_supertonic_title
 import textlector.composeapp.generated.resources.voice_model_download_failed
 import textlector.composeapp.generated.resources.voice_model_downloading
 import textlector.composeapp.generated.resources.voice_model_not_downloaded
@@ -214,6 +219,98 @@ fun VoiceDownloadBanner(
                         .clip(RoundedCornerShape(8.dp))
                         .clickable { onDownload() }
                         .padding(horizontal = 12.dp, vertical = 6.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun SupertonicDownloadBanner(
+    downloadState: SupertonicModelState,
+    onDownload: () -> Unit,
+    onDelete: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surface)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = stringResource(Res.string.settings_engine_supertonic_title),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = when (downloadState) {
+                    is SupertonicModelState.NotDownloaded -> stringResource(Res.string.settings_engine_supertonic_not_downloaded)
+                    is SupertonicModelState.Downloading -> {
+                        val downloaded = downloadState.bytesDownloaded / 1_048_576L
+                        val total = downloadState.totalBytes / 1_048_576L
+                        "$downloaded MB / $total MB"
+                    }
+                    is SupertonicModelState.Ready -> stringResource(Res.string.voice_model_ready)
+                    is SupertonicModelState.Error -> "Error: ${downloadState.message}"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            if (downloadState is SupertonicModelState.Downloading) {
+                val progress = if (downloadState.totalBytes > 0) {
+                    downloadState.bytesDownloaded.toFloat() / downloadState.totalBytes
+                } else 0f
+
+                Spacer(modifier = Modifier.height(6.dp))
+                LinearProgressIndicator(
+                    progress = { progress },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(3.dp)
+                        .clip(RoundedCornerShape(2.dp)),
+                    color = MaterialTheme.colorScheme.primary,
+                    trackColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.width(12.dp))
+
+        when (downloadState) {
+            is SupertonicModelState.NotDownloaded,
+            is SupertonicModelState.Error -> {
+                Text(
+                    text = stringResource(Res.string.action_download),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .clickable(onClick = onDownload)
+                        .padding(4.dp)
+                )
+            }
+            is SupertonicModelState.Downloading -> {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(20.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+            is SupertonicModelState.Ready -> {
+                Text(
+                    text = stringResource(Res.string.action_delete),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .clickable(onClick = onDelete)
+                        .padding(4.dp)
                 )
             }
         }

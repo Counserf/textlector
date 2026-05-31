@@ -1,5 +1,6 @@
 package com.nedmah.textlector.domain.repository
 
+import com.nedmah.textlector.domain.model.TtsEngineType
 import com.nedmah.textlector.domain.model.UserPreferences
 import com.nedmah.textlector.domain.model.VoiceGender
 import kotlinx.coroutines.flow.Flow
@@ -16,7 +17,7 @@ interface PreferencesRepository {
 
     suspend fun setVoiceLanguage(language : String)
 
-    suspend fun setUseSherpaEngine(value: Boolean)
+    suspend fun setEngineType(type: TtsEngineType)
 
 
     fun getPreferences(): Flow<UserPreferences>

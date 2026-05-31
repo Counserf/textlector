@@ -7,8 +7,10 @@ import com.nedmah.textlector.common.platform.tts.SwitchableTtsEngine
 import com.nedmah.textlector.common.platform.tts.TtsEngine
 import com.nedmah.textlector.data.db.DatabaseDriverFactory
 import com.nedmah.textlector.data.repository.IosOcrDataRepository
+import com.nedmah.textlector.data.repository.IosSupertonicRepository
 import com.nedmah.textlector.data.repository.IosVoiceModelRepositoryImpl
 import com.nedmah.textlector.domain.repository.OcrDataRepository
+import com.nedmah.textlector.domain.repository.SupertonicRepository
 import com.nedmah.textlector.domain.repository.VoiceModelRepository
 import com.russhwolf.settings.NSUserDefaultsSettings
 import com.russhwolf.settings.ObservableSettings
@@ -24,6 +26,7 @@ actual val platformModule = module {
         SwitchableTtsEngine(
             nativeEngine = IosTtsEngine(),
             sherpaEngine = IosEngineHolder.sherpaEngine ?: error("SherpaEngine not initialized"),
+            supertonicEngine = IosEngineHolder.supertonicEngine ?: error("SupertonicEngine not initialized"),
             preferencesRepository = get()
         )
     }
@@ -31,4 +34,5 @@ actual val platformModule = module {
         IosEngineHolder.ocrEngine ?: error("OcrEngine not initialized")
     }
     single<OcrDataRepository> { IosOcrDataRepository() }
+    single<SupertonicRepository> { IosSupertonicRepository() }
 }

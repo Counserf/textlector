@@ -1,5 +1,6 @@
 package com.nedmah.textlector.ui.presentation.settings
 
+import com.nedmah.textlector.domain.model.TtsEngineType
 import com.nedmah.textlector.domain.model.VoiceGender
 
 interface SettingsIntent {
@@ -14,8 +15,10 @@ interface SettingsIntent {
     data class SetLanguage(val language: String) :
         com.nedmah.textlector.ui.presentation.settings.SettingsIntent
 
-    data class SetAudioEngine(val isEngine : Boolean) : SettingsIntent
+    data class SetAudioEngine(val type : TtsEngineType) : SettingsIntent
 
-    data object DownloadCurrentVoice : SettingsIntent
-    data object DeleteCurrentVoice : SettingsIntent
+    data object DownloadSherpaVoice : SettingsIntent
+    data object DeleteSherpaVoice : SettingsIntent
+    object DownloadSupertonic : SettingsIntent
+    object DeleteSupertonic : SettingsIntent
 }

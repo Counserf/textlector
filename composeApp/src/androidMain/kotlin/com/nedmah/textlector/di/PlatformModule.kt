@@ -1,17 +1,23 @@
 package com.nedmah.textlector.di
 
 import android.content.Context
+import com.nedmah.supertonic_kmp.api.SupertonicConfig
+import com.nedmah.supertonic_kmp.api.SupertonicTts
+import com.nedmah.supertonic_kmp.api.SupertonicVoice
 import com.nedmah.textlector.common.platform.file.FileReader
 import com.nedmah.textlector.common.platform.ocr.AndroidOcrEngine
 import com.nedmah.textlector.common.platform.ocr.OcrEngine
 import com.nedmah.textlector.common.platform.tts.AndroidSherpaOnnxTtsEngine
+import com.nedmah.textlector.common.platform.tts.AndroidSupertonicTtsEngine
 import com.nedmah.textlector.common.platform.tts.AndroidTtsEngine
 import com.nedmah.textlector.common.platform.tts.SwitchableTtsEngine
 import com.nedmah.textlector.common.platform.tts.TtsEngine
 import com.nedmah.textlector.data.db.DatabaseDriverFactory
 import com.nedmah.textlector.data.repository.AndroidOcrDataRepository
+import com.nedmah.textlector.data.repository.AndroidSupertonicRepositoryImpl
 import com.nedmah.textlector.data.repository.AndroidVoiceModelRepositoryImpl
 import com.nedmah.textlector.domain.repository.OcrDataRepository
+import com.nedmah.textlector.domain.repository.SupertonicRepository
 import com.nedmah.textlector.domain.repository.VoiceModelRepository
 import com.russhwolf.settings.ObservableSettings
 import com.russhwolf.settings.SharedPreferencesSettings
@@ -29,17 +35,32 @@ actual val platformModule = module {
     single { FileReader(androidContext()) }
     single<OcrEngine> { AndroidOcrEngine(get(), get(), get()) }
 
+    // Supertonic
+    single {
+        SupertonicTts(
+            SupertonicConfig(
+                storageDir = androidContext().filesDir.path + "/supertonic",
+                defaultLang = "en",
+                defaultVoice = SupertonicVoice.M1,
+                inferenceSteps = 7
+            )
+        )
+    }
+
     // repository
     single<OcrDataRepository> { AndroidOcrDataRepository(get()) }
     single<VoiceModelRepository> { AndroidVoiceModelRepositoryImpl(androidContext()) }
+    single<SupertonicRepository> { AndroidSupertonicRepositoryImpl(get()) }
 
     // TTS engines
     single { AndroidTtsEngine(androidContext()) }
     single { AndroidSherpaOnnxTtsEngine(get()) }
+    single { AndroidSupertonicTtsEngine(get<SupertonicTts>()) }
     single<TtsEngine> {
         SwitchableTtsEngine(
             nativeEngine = get<AndroidTtsEngine>(),
             sherpaEngine = get<AndroidSherpaOnnxTtsEngine>(),
+            supertonicEngine = get<AndroidSupertonicTtsEngine>(),
             preferencesRepository = get()
         )
     }

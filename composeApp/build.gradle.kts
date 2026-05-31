@@ -28,6 +28,7 @@ kotlin {
         iosTarget.binaries.framework {
             baseName = "ComposeApp"
             isStatic = true
+            export(libs.supertonic.kmp)
         }
     }
 
@@ -47,18 +48,6 @@ kotlin {
     jvmToolchain(21)
 
     sourceSets {
-        androidMain.dependencies {
-            implementation(libs.compose.uiToolingPreview)
-            implementation(libs.androidx.activity.compose)
-            implementation(libs.koin.android)
-            implementation(libs.sqldelight.androidDriver)
-            implementation(libs.sherpa.onnx.android)
-            implementation(libs.commons.compress.android)
-            implementation(project.dependencies.platform("com.google.firebase:firebase-bom:33.13.0"))
-            implementation(libs.firebase.crashlytics)
-            implementation(libs.firebase.analytics)
-            implementation(libs.tesseract4android)
-        }
         commonMain.dependencies {
             implementation(libs.compose.runtime)
             implementation(libs.compose.foundation)
@@ -97,8 +86,21 @@ kotlin {
 
             implementation(libs.synth.kmp.zip)
         }
+        androidMain.dependencies {
+            implementation(libs.compose.uiToolingPreview)
+            implementation(libs.androidx.activity.compose)
+            implementation(libs.koin.android)
+            implementation(libs.sqldelight.androidDriver)
+            implementation(libs.commons.compress.android)
+            implementation(project.dependencies.platform("com.google.firebase:firebase-bom:33.13.0"))
+            implementation(libs.firebase.crashlytics)
+            implementation(libs.firebase.analytics)
+            implementation(libs.tesseract4android)
+            implementation(libs.supertonic.kmp)
+        }
         iosMain.dependencies {
             implementation(libs.sqldelight.nativeDriver)
+            api(libs.supertonic.kmp)
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
@@ -128,13 +130,20 @@ android {
         applicationId = "com.nedmah.textlector"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
-        versionCode = 125
-        versionName = "1.2.5"
+        versionCode = 130
+        versionName = "1.3.0"
     }
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+        jniLibs {
+            pickFirsts += "lib/arm64-v8a/libonnxruntime.so"
+            pickFirsts += "lib/x86_64/libonnxruntime.so"
+            pickFirsts += "lib/armeabi-v7a/libonnxruntime.so"
+            pickFirsts += "lib/x86/libonnxruntime.so"
+        }
+
     }
     signingConfigs {
         create("release") {
@@ -161,6 +170,7 @@ android {
 
 dependencies {
     debugImplementation(libs.compose.uiTooling)
+    add("androidMainImplementation", fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar"))))
 }
 
 compose.desktop {

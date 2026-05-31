@@ -12,12 +12,8 @@ import platform.Foundation.NSFileCoordinator
 import platform.Foundation.NSString
 import platform.Foundation.NSURL
 import platform.Foundation.NSUTF8StringEncoding
-import platform.Foundation.create
-import platform.Foundation.dataWithBytes
 import platform.Foundation.dataWithContentsOfURL
-import platform.Foundation.getBytes
 import platform.Foundation.stringWithContentsOfURL
-import platform.PDFKit.PDFDocument
 
 actual class FileReader {
 

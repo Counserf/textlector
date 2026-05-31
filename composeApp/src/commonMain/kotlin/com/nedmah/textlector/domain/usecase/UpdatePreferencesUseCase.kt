@@ -1,5 +1,6 @@
 package com.nedmah.textlector.domain.usecase
 
+import com.nedmah.textlector.domain.model.TtsEngineType
 import com.nedmah.textlector.domain.model.VoiceGender
 import com.nedmah.textlector.domain.repository.PreferencesRepository
 
@@ -11,6 +12,6 @@ class UpdatePreferencesUseCase(
     suspend fun setDarkMode(enabled: Boolean) = repository.setDarkMode(enabled)
     suspend fun setVoice(gender: VoiceGender) = repository.setVoiceProfile(gender)
     suspend fun setLanguage(language: String) = repository.setVoiceLanguage(language)
-    suspend fun setUseSherpaEngine(useSherpa : Boolean) = repository.setUseSherpaEngine(useSherpa)
+    suspend fun setEngineType(type : TtsEngineType) = repository.setEngineType(type)
 
 }
