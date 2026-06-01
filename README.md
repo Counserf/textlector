@@ -9,7 +9,13 @@
 A free, offline text-to-speech reader for Android and iOS, built with Kotlin Multiplatform and Compose Multiplatform.
 
 > Open-source alternative to Speechify — no subscriptions, no internet required, no data leaves your device.
- 
+
+---
+
+## Demo
+
+https://github.com/nedmah/TextLector/releases/download/v1.3.0/TextLector.demo.mp4
+
 ---
 
 ## Screenshots
@@ -19,63 +25,66 @@ A free, offline text-to-speech reader for Android and iOS, built with Kotlin Mul
   <img src="screenshots/reader.png" width="200"/>
   <img src="screenshots/settings.png" width="200"/>
 </p>
+
 ---
 
 ## Features
 
-- **Import** — PDF, TXT, URL, or paste text manually
-- **Offline TTS** — native system voices on both platforms; high-quality neural Piper voices via sherpa-onnx (Android, iOS)
-- **Paragraph highlighting** — current paragraph is highlighted in sync with playback
+- **Import** — PDF, TXT, EPUB, FB2, URL, or paste text manually
+- **Offline TTS** — three engines: system voices, Piper (neural, ~63 MB), Supertonic (highest quality, ~380 MB)
+- **Paragraph highlighting** — current paragraph highlighted in sync with playback
 - **Reading progress** — app remembers where you stopped in every document
 - **Library** — manage documents, mark favorites, sort by date
 - **Adjustable playback** — speed control (0.5x–2.0x), voice gender, language, font size
+- **Switch engines at runtime** — no app restart required
+
 ---
 
 ## TTS Architecture
 
-TextLector uses a three-tier TTS system:
+TextLector uses a three-tier TTS system managed by a single `SwitchableTtsEngine` interface.
 
-**Phase 1 — Native TTS (default)**
+**Tier 1 — System TTS (default)**
 Android `TextToSpeech` and iOS `AVSpeechSynthesizer` — available immediately, no downloads.
 
-**Phase 2 — Neural TTS via Piper / sherpa-onnx**
+**Tier 2 — Neural TTS via Piper / sherpa-onnx**
 [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) bundles a pre-compiled ONNX Runtime and eSpeak-NG. Piper VITS models (~63 MB each) are downloaded on demand from HuggingFace and stored locally.
 
-Supported voices:
-| Voice | Language | Gender |
-|---|---|---|
-| Ruslan | Russian | Male |
-| Irina | Russian | Female |
-| Ryan | English | Male |
-| Lessac | English | Female |
+| Voice  | Language | Gender |
+|--------|----------|--------|
+| Ruslan | Russian  | Male   |
+| Irina  | Russian  | Female |
+| Ryan   | English  | Male   |
+| Lessac | English  | Female |
 
-**Phase 3 — Neural TTS via Supertonic**
-[supertonic-kmp](https://github.com/nedmah/supertonic-kmp) — a KMP wrapper around [Supertonic v3](https://github.com/supertone-inc/supertonic) by Supertone Inc. Flow-matching neural synthesis, 31 languages, 10 bundled voice presets (M1–M5, F1–F5). One-time model download (~265 MB), then fully offline.
+**Tier 3 — Neural TTS via Supertonic**
+[supertonic-kmp](https://github.com/nedmah/supertonic-kmp) — a KMP wrapper around [Supertonic v3](https://github.com/supertone-inc/supertonic) by Supertone Inc. Flow-matching neural synthesis with 10 bundled voice presets (M1–M5, F1–F5) for Russian and English. One-time model download (~380 MB), then fully offline.
 
-Compared to Piper: higher naturalness, broader language coverage, but slower generation on mobile CPU. Tune `inferenceSteps` (2–12) to trade quality for speed.
+Compared to Piper: higher naturalness, but slower generation on mobile CPU. Tune `inferenceSteps` (2–12) to trade quality for speed.
 
-All three engines share a single `SwitchableTtsEngine` interface. Switching happens at runtime — no app restart required. ONNX-based engines (Piper and Supertonic) use a shared `TtsQueue` that prefetches the next paragraph in background while the current one is playing.
+Both ONNX-based engines use a shared `TtsQueue` that prefetches the next paragraph in the background while the current one plays.
 
-**Known limitation:** sherpa-onnx and supertonic-kmp both bundle `libonnxruntime.so`. This is resolved via `jniLibs.pickFirsts` in `build.gradle.kts` combined with the static-link sherpa-onnx AAR (`sherpa-onnx-static-link-onnxruntime-1.12.34.aar`) which embeds ORT statically, eliminating the symbol conflict.
+**Known limitation:** sherpa-onnx and supertonic-kmp both bundle `libonnxruntime.so`. Resolved via `jniLibs.pickFirsts` in `build.gradle.kts` combined with the static-link sherpa-onnx AAR which embeds ORT statically, eliminating the symbol conflict.
+
 ---
 
 ## Tech Stack
 
-| Layer         | Technology                                                |
-|---------------|-----------------------------------------------------------|
-| UI            | Compose Multiplatform                                     |
-| Architecture  | MVI + ViewModel (commonMain)                              |
-| DI            | Koin Multiplatform                                        |
-| Navigation    | Navigation Compose CMP (Nav2.8, typesafe routes)          |
-| Database      | SQLDelight 2.x                                            |
-| Preferences   | multiplatform-settings                                    |
-| File I/O      | okio                                                      |
-| HTTP          | Ktor Client 3.x                                           |
-| HTML parsing  | Ksoup (Jsoup KMP port)                                    |
-| Neural TTS    | sherpa-onnx (Piper VITS) + supertonic-kmp (Supertonic v3) |
-| PDF (Android) | PdfBox-Android                                            |
-| PDF (iOS)     | PDFKit + Vision OCR fallback                              |
- 
+| Layer         | Technology                                                 |
+|---------------|------------------------------------------------------------|
+| UI            | Compose Multiplatform                                      |
+| Architecture  | MVI + ViewModel (commonMain)                               |
+| DI            | Koin Multiplatform                                         |
+| Navigation    | Navigation Compose CMP (Nav2.8, typesafe routes)           |
+| Database      | SQLDelight 2.x                                             |
+| Preferences   | multiplatform-settings                                     |
+| File I/O      | okio                                                       |
+| HTTP          | Ktor Client 3.x                                            |
+| HTML parsing  | Ksoup (Jsoup KMP port)                                     |
+| Neural TTS    | sherpa-onnx (Piper VITS) + supertonic-kmp (Supertonic v3)  |
+| PDF (Android) | PdfBox-Android                                             |
+| PDF (iOS)     | PDFKit + Vision OCR fallback                               |
+
 ---
 
 ## Project Structure
@@ -90,13 +99,13 @@ composeApp/
 ├── androidMain/        # Android actuals + sherpa-onnx engine
 ├── iosMain/            # iOS actuals
 └── jvmMain/            # Desktop (planned)
- 
+
 iosApp/
 ├── TTS/                # IosSherpaEngine, SherpaOnnxTtsBridge
 ├── PDF/                # PdfTextExtractor, IosPdfPageExtractor
 └── Utils/              # IosFileDownloader, IosTarExtractor
 ```
- 
+
 ---
 
 ## Building
@@ -107,6 +116,7 @@ iosApp/
 - Xcode 15+
 - JDK 17+
 - Kotlin 2.0+
+
 ### Android
 
 ```bash
@@ -125,7 +135,7 @@ Open `iosApp/iosApp.xcodeproj` in Xcode and run on a simulator or device.
 ./gradlew :composeApp:compileKotlinAndroid
 ./gradlew :composeApp:iosArm64MainKlibrary
 ```
- 
+
 ---
 
 ## Roadmap
@@ -135,11 +145,12 @@ Open `iosApp/iosApp.xcodeproj` in Xcode and run on a simulator or device.
 - [x] Native TTS (Android + iOS)
 - [x] Neural TTS via Piper / sherpa-onnx (Android + iOS)
 - [x] Camera / OCR import
-- [x] Neural TTS via Supertonic — 31 languages, flow-matching
-- [ ] JVM / Desktop support
+- [x] Neural TTS via Supertonic — flow-matching, RU + EN
 - [ ] Background playback (MediaSession / AVAudioSession)
+- [ ] JVM / Desktop support
+
 ---
 
 ## License
 
-[<image-card alt="License" src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" ></image-card>](https://opensource.org/licenses/Apache-2.0)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
