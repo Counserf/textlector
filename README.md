@@ -14,7 +14,7 @@ A free, offline text-to-speech reader for Android and iOS, built with Kotlin Mul
 
 ## Demo
 
-https://github.com/nedmah/TextLector/releases/download/v1.3.0/TextLector.demo.mp4
+https://github.com/user-attachments/assets/0756bb22-88df-4ab7-adac-295487bf5d66
 
 ---
 
