@@ -10,7 +10,6 @@ import platform.UniformTypeIdentifiers.UTType
 import platform.darwin.NSObject
 
 private const val FICTIONBOOK_MIME = "application/x-fictionbook+xml"
-private const val ZIP_MIME = "application/zip"
 
 @Composable
 actual fun rememberFileLauncher(
@@ -20,17 +19,21 @@ actual fun rememberFileLauncher(
     val delegateHolder = remember { mutableListOf<NSObject>() }
 
     return { mimeType ->
-        val primaryType = UTType.typeWithMIMEType(mimeType)
         val types = if (mimeType == FICTIONBOOK_MIME) {
-            listOfNotNull(primaryType, UTType.typeWithMIMEType(ZIP_MIME))
+            listOfNotNull(
+                UTType.typeWithFilenameExtension("fb2"),
+                UTType.typeWithFilenameExtension("zip"),
+                UTType.typeWithMIMEType(FICTIONBOOK_MIME)
+            ).distinctBy { it.identifier }
         } else {
-            listOfNotNull(primaryType)
+            listOfNotNull(UTType.typeWithMIMEType(mimeType))
         }
 
         val picker = UIDocumentPickerViewController(
             forOpeningContentTypes = types,
             asCopy = true
         )
+        picker.shouldShowFileExtensions = true
 
         val delegate = object : NSObject(), UIDocumentPickerDelegateProtocol {
             override fun documentPicker(
@@ -41,6 +44,7 @@ actual fun rememberFileLauncher(
                 onResult(url?.path, mimeType)
                 delegateHolder.clear()
             }
+
             override fun documentPickerWasCancelled(
                 controller: UIDocumentPickerViewController
             ) {
