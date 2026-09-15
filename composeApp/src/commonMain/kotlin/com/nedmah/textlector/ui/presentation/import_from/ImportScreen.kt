@@ -101,8 +101,7 @@ fun ImportScreenRoot(
         viewModel.effect.collect { effect ->
             when (effect) {
                 is ImportEffect.NavigateToReader -> onNavigateToReader(effect.documentId)
-                is ImportEffect.ShowError -> { /* Snackbar */
-                }
+                is ImportEffect.ShowError -> { /* Snackbar */ }
             }
         }
     }
@@ -238,7 +237,6 @@ private fun ImportScreen(
 
             Spacer(modifier = Modifier.height(28.dp))
 
-            // Manual transcription
             Text(
                 text = stringResource(Res.string.import_section_manual),
                 style = MaterialTheme.typography.labelSmall,
@@ -253,7 +251,6 @@ private fun ImportScreen(
 
             Spacer(modifier = Modifier.height(28.dp))
 
-            // Import Files
             Text(
                 text = stringResource(Res.string.import_section_files),
                 style = MaterialTheme.typography.labelSmall,
@@ -263,8 +260,7 @@ private fun ImportScreen(
             LazyRow(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 contentPadding = PaddingValues(end = 20.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
+                modifier = Modifier.fillMaxWidth()
             ) {
                 items(fileTypes) { (info, onClick) ->
                     FileTypeCard(
@@ -277,6 +273,15 @@ private fun ImportScreen(
                         onClick = onClick
                     )
                 }
+            }
+
+            state.selectedFileName?.let { fileName ->
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    text = "Выбран файл: $fileName",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
             }
 
             when (val progress = state.importProgress) {
@@ -310,7 +315,7 @@ private fun ImportScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(modifier = Modifier.height(4.dp))
-                        LinearProgressIndicator( // indeterminate
+                        LinearProgressIndicator(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(3.dp)
@@ -326,7 +331,6 @@ private fun ImportScreen(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Url and camera
             ImportRowItem(
                 title = stringResource(Res.string.import_from_url),
                 iconRes = Res.drawable.ic_url,
@@ -341,17 +345,13 @@ private fun ImportScreen(
 
             Spacer(modifier = Modifier.height(32.dp))
 
-            // Process button
             Button(
-                onClick = {
-                    if (state.manualText.isNotBlank()) {
-                        onIntent(ImportIntent.ImportManually)
-                    }
-                },
+                onClick = { onIntent(ImportIntent.ProcessDocument) },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(56.dp),
-                enabled = !state.isLoading && state.manualText.isNotBlank(),
+                enabled = !state.isLoading &&
+                    (state.manualText.isNotBlank() || state.selectedFileUri != null),
                 shape = RoundedCornerShape(16.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.primary
@@ -360,7 +360,7 @@ private fun ImportScreen(
                 when (val progress = state.importProgress) {
                     is ImportProgress.Processing -> {
                         Text(
-                            text = stringResource(Res.string.import_pages_progress,progress.current, progress.total),
+                            text = stringResource(Res.string.import_pages_progress, progress.current, progress.total),
                             style = MaterialTheme.typography.bodyMedium,
                             color = Color.White
                         )
@@ -402,9 +402,6 @@ private fun ImportScreen(
             )
 
             Spacer(modifier = Modifier.height(24.dp))
-
-
         }
     }
-
 }
