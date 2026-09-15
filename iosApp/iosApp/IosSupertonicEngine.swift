@@ -30,9 +30,12 @@ import ComposeApp
     func loadVoice(model: VoiceModel) async throws {
         currentLang = model.language
         currentVoice = model.gender == VoiceGender.male ? "M1" : "F1"
-        
+
+        // supertonic-kmp downloads files directly into storageDir. MODEL_FILES contain
+        // the remote "onnx/..." prefix, but ModelDownloader flattens them to fileName.
+        // Therefore the Swift bridge must receive Documents/supertonic, not /onnx.
         let docsDir = NSSearchPathForDirectoriesInDomains(.documentDirectory, .userDomainMask, true).first!
-        let storageDir = docsDir + "/supertonic/onnx"
+        let storageDir = docsDir + "/supertonic"
         print("[IosSupertonicEngine] loading bridge from: \(storageDir)")
         bridge.load(storageDir: storageDir)
         print("[IosSupertonicEngine] bridge.isLoaded: \(bridge.isLoaded)")
@@ -50,9 +53,22 @@ import ComposeApp
     }
 
     func generate(text: String, speed: Float) async throws -> KotlinByteArray {
+        guard bridge.isLoaded else {
+            throw makeError(
+                "Supertonic не загрузил ONNX-модели. Ожидаемый каталог: Documents/supertonic. " +
+                "Удалите модель Supertonic в настройках и скачайте её заново."
+            )
+        }
+
         let styleJson = loadVoiceStyle(currentVoice)
         print("[IosSupertonicEngine] generate: voice=\(currentVoice), lang=\(currentLang), styleJson empty=\(styleJson == "{}")")
-        
+
+        guard styleJson != "{}" else {
+            throw makeError(
+                "Не найден стиль голоса Supertonic \(currentVoice).json в bundle приложения."
+            )
+        }
+
         guard let data = bridge.generate(
             text: text,
             lang: currentLang,
@@ -61,13 +77,23 @@ import ComposeApp
             steps: 8
         ) else {
             print("[IosSupertonicEngine] bridge.generate returned nil")
-            return KotlinByteArray(size: 0)
+            throw makeError(
+                "Supertonic не смог сгенерировать аудио. Модель: Supertonic v3 / \(currentVoice), язык: \(currentLang)."
+            )
         }
+
+        guard !data.isEmpty else {
+            throw makeError("Supertonic вернул пустой WAV-файл.")
+        }
+
         print("[IosSupertonicEngine] generate success: \(data.count) bytes")
         return data.toKotlinByteArray()
     }
 
     func playAudio(audio: KotlinByteArray) async throws {
+        guard audio.size > 0 else {
+            throw makeError("Supertonic: попытка воспроизвести пустой аудиобуфер.")
+        }
         bridge.playWav(data: audio.toData())
     }
 
@@ -82,16 +108,38 @@ import ComposeApp
     }
 
     private func loadVoiceStyle(_ voice: String) -> String {
-        guard let url = Bundle.main.url(
-                forResource: voice.uppercased(),
+        let name = voice.uppercased()
+        let candidates: [URL?] = [
+            Bundle.main.url(
+                forResource: name,
                 withExtension: "json",
                 subdirectory: "supertonic/voice_styles"
             ),
-            let json = try? String(contentsOf: url, encoding: .utf8) else {
-                print("[IosSupertonicEngine] voice style not found: \(voice)")
-                return "{}"
+            Bundle.main.url(
+                forResource: name,
+                withExtension: "json",
+                subdirectory: "voice_styles"
+            )
+        ]
+
+        for candidate in candidates {
+            if let url = candidate,
+               let json = try? String(contentsOf: url, encoding: .utf8) {
+                print("[IosSupertonicEngine] voice style loaded from: \(url.path)")
+                return json
             }
-            return json
+        }
+
+        print("[IosSupertonicEngine] voice style not found: \(voice)")
+        return "{}"
+    }
+
+    private func makeError(_ message: String) -> NSError {
+        NSError(
+            domain: "TextLector.Supertonic",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: message]
+        )
     }
 }
 
