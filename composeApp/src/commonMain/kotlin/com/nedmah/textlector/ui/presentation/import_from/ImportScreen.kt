@@ -207,7 +207,7 @@ private fun ImportScreen(
         ) to { onPickFile("application/epub+zip") },
         Triple(
             "FictionBook",
-            "FB2 FILES",
+            "FB2 / FB2.ZIP",
             Res.drawable.ic_fb2
         ) to { onPickFile("application/x-fictionbook+xml") },
     )
