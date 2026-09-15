@@ -49,7 +49,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: iosApp/Frameworks
-          key: sherpa-onnx-ios-v1.12.34-macos15
+          key: sherpa-onnx-ios-v1.12.34-macos15-v2
 
       - name: Build sherpa-onnx XCFrameworks
         if: steps.sherpa-cache.outputs.cache-hit != 'true'
@@ -61,11 +61,19 @@ jobs:
           git clone --depth 1 --branch v1.12.34 https://github.com/k2-fsa/sherpa-onnx.git /tmp/sherpa-onnx
           cd /tmp/sherpa-onnx
           ./build-ios.sh
+
+          SHERPA_XC="$(find /tmp/sherpa-onnx -type d -name 'sherpa-onnx.xcframework' -print -quit)"
+          ORT_XC="$(find /tmp/sherpa-onnx -type d -name 'onnxruntime.xcframework' -print -quit)"
+          echo "sherpa-onnx XCFramework: $SHERPA_XC"
+          echo "onnxruntime XCFramework: $ORT_XC"
+          test -n "$SHERPA_XC"
+          test -n "$ORT_XC"
+
           cd "$GITHUB_WORKSPACE"
           mkdir -p iosApp/Frameworks
           rm -rf iosApp/Frameworks/sherpa-onnx.xcframework iosApp/Frameworks/onnxruntime.xcframework
-          cp -R /tmp/sherpa-onnx/build-ios/sherpa-onnx.xcframework iosApp/Frameworks/
-          cp -R /tmp/sherpa-onnx/build-ios/ios-onnxruntime/onnxruntime.xcframework iosApp/Frameworks/
+          cp -R "$SHERPA_XC" iosApp/Frameworks/sherpa-onnx.xcframework
+          cp -R "$ORT_XC" iosApp/Frameworks/onnxruntime.xcframework
 
       - name: Verify native frameworks
         shell: bash
@@ -73,7 +81,7 @@ jobs:
           set -euxo pipefail
           test -d iosApp/Frameworks/sherpa-onnx.xcframework
           test -d iosApp/Frameworks/onnxruntime.xcframework
-          find iosApp/Frameworks -maxdepth 3 -type f | head -80
+          find iosApp/Frameworks -maxdepth 3 -type f | sed -n '1,80p'
 
       - name: Resolve Swift packages
         shell: bash
@@ -128,7 +136,7 @@ jobs:
           mkdir Payload
           cp -R "$APP_PATH" Payload/
           /usr/bin/zip -qry TextLector-unsigned.ipa Payload
-          unzip -l TextLector-unsigned.ipa | head -60
+          unzip -l TextLector-unsigned.ipa | sed -n '1,60p'
           if codesign -dv "$APP_PATH" >/dev/null 2>&1; then
             echo 'WARNING: app bundle contains a code signature.'
           else
