@@ -77,20 +77,15 @@ fun ImportScreenRoot(
     onNavigateToReader: (String) -> Unit,
     viewModel: ImportViewModel = koinViewModel()
 ) {
-
     val state by viewModel.state.collectAsStateWithLifecycle()
-
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
-
     val urlSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     val fileLauncher = rememberFileLauncher { uri, mimeType ->
-        if (uri != null) {
-            viewModel.onIntent(ImportIntent.FileSelected(uri, mimeType))
-        }
+        if (uri != null) viewModel.onIntent(ImportIntent.FileSelected(uri, mimeType))
     }
 
     val cameraLauncher = rememberCameraLauncher { uri ->
@@ -101,7 +96,7 @@ fun ImportScreenRoot(
         viewModel.effect.collect { effect ->
             when (effect) {
                 is ImportEffect.NavigateToReader -> onNavigateToReader(effect.documentId)
-                is ImportEffect.ShowError -> { /* Snackbar */ }
+                is ImportEffect.ShowError -> Unit
             }
         }
     }
@@ -114,6 +109,13 @@ fun ImportScreenRoot(
         }
     }
 
+    LaunchedEffect(state.processedDocument) {
+        if (state.processedDocument != null) {
+            keyboardController?.hide()
+            focusManager.clearFocus(force = true)
+        }
+    }
+
     LaunchedEffect(state.shouldLaunchCamera) {
         if (state.shouldLaunchCamera) {
             cameraLauncher()
@@ -123,13 +125,12 @@ fun ImportScreenRoot(
 
     Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         ImportScreen(
-            state,
-            viewModel::onIntent,
+            state = state,
+            onIntent = viewModel::onIntent,
             onPickFile = { mimeType -> fileLauncher(mimeType) }
         )
 
         val document = state.processedDocument
-
         if (document != null) {
             ModalBottomSheet(
                 onDismissRequest = { viewModel.onIntent(ImportIntent.DismissImport) },
@@ -185,30 +186,14 @@ private fun ImportScreen(
     onIntent: (ImportIntent) -> Unit,
     onPickFile: (String) -> Unit,
 ) {
-
     val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
 
     val fileTypes = listOf(
-        Triple(
-            "PDF Document",
-            "STANDARD OCR",
-            Res.drawable.ic_pdf_doc
-        ) to { onPickFile("application/pdf") },
-        Triple(
-            "Plain Text",
-            "TXT / MD FILES",
-            Res.drawable.ic_text_doc
-        ) to { onPickFile("text/plain") },
-        Triple(
-            "EPUB Book",
-            "EPUB FILES",
-            Res.drawable.ic_epub
-        ) to { onPickFile("application/epub+zip") },
-        Triple(
-            "FictionBook",
-            "FB2 / FB2.ZIP",
-            Res.drawable.ic_fb2
-        ) to { onPickFile("application/x-fictionbook+xml") },
+        Triple("PDF Document", "STANDARD OCR", Res.drawable.ic_pdf_doc) to { onPickFile("application/pdf") },
+        Triple("Plain Text", "TXT / MD FILES", Res.drawable.ic_text_doc) to { onPickFile("text/plain") },
+        Triple("EPUB Book", "EPUB FILES", Res.drawable.ic_epub) to { onPickFile("application/epub+zip") },
+        Triple("FictionBook", "FB2 / FB2.ZIP", Res.drawable.ic_fb2) to { onPickFile("application/x-fictionbook+xml") },
     )
 
     Column(
@@ -222,7 +207,6 @@ private fun ImportScreen(
         TopBar(onSearchClick = {})
 
         Column(modifier = Modifier.padding(horizontal = 20.dp)) {
-
             Text(
                 text = stringResource(Res.string.import_title),
                 style = MaterialTheme.typography.headlineLarge,
@@ -243,7 +227,6 @@ private fun ImportScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(modifier = Modifier.height(8.dp))
-
             ManualTextInput(
                 text = state.manualText,
                 onTextChange = { onIntent(ImportIntent.EnterText(it)) }
@@ -264,9 +247,7 @@ private fun ImportScreen(
             ) {
                 items(fileTypes) { (info, onClick) ->
                     FileTypeCard(
-                        modifier = Modifier
-                            .width(150.dp)
-                            .height(160.dp),
+                        modifier = Modifier.width(150.dp).height(160.dp),
                         title = info.first,
                         subtitle = info.second,
                         iconRes = info.third,
@@ -296,10 +277,7 @@ private fun ImportScreen(
                         Spacer(modifier = Modifier.height(4.dp))
                         LinearProgressIndicator(
                             progress = { progress.current.toFloat() / progress.total },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(3.dp)
-                                .clip(RoundedCornerShape(2.dp)),
+                            modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)),
                             color = MaterialTheme.colorScheme.primary,
                             trackColor = MaterialTheme.colorScheme.surfaceVariant
                         )
@@ -316,17 +294,23 @@ private fun ImportScreen(
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         LinearProgressIndicator(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(3.dp)
-                                .clip(RoundedCornerShape(2.dp)),
+                            modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)),
                             color = MaterialTheme.colorScheme.primary,
                             trackColor = MaterialTheme.colorScheme.surfaceVariant
                         )
                     }
                 }
 
-                else -> {}
+                else -> Unit
+            }
+
+            state.error?.let { message ->
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = "Ошибка: $message",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
             }
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -346,16 +330,16 @@ private fun ImportScreen(
             Spacer(modifier = Modifier.height(32.dp))
 
             Button(
-                onClick = { onIntent(ImportIntent.ProcessDocument) },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp),
+                onClick = {
+                    keyboardController?.hide()
+                    focusManager.clearFocus(force = true)
+                    onIntent(ImportIntent.ProcessDocument)
+                },
+                modifier = Modifier.fillMaxWidth().height(56.dp),
                 enabled = !state.isLoading &&
                     (state.manualText.isNotBlank() || state.selectedFileUri != null),
                 shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary
-                )
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
             ) {
                 when (val progress = state.importProgress) {
                     is ImportProgress.Processing -> {
