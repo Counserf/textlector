@@ -132,22 +132,17 @@ class ImportViewModel(
             return
         }
 
-        val lines = text.lines()
-        val title: String
-        val bodyText: String
-
-        if (lines.size == 1) {
-            title = text.split(" ").take(5).joinToString(" ")
-            bodyText = text
-        } else {
-            title = lines.firstOrNull { it.isNotBlank() }?.trim() ?: "Untitled"
-            bodyText = lines.drop(1).joinToString("\n").trim()
-        }
-
-        if (bodyText.isBlank()) {
-            _state.update { it.copy(error = "Text cannot be empty") }
-            return
-        }
+        val normalizedText = text.trim()
+        val title = normalizedText
+            .lineSequence()
+            .firstOrNull { it.isNotBlank() }
+            ?.trim()
+            ?.split(Regex("\\s+"))
+            ?.take(8)
+            ?.joinToString(" ")
+            ?.takeIf { it.isNotBlank() }
+            ?: "Untitled"
+        val bodyText = normalizedText
 
         viewModelScope.launch {
             _state.update {
