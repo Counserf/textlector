@@ -47,27 +47,20 @@ class ImportViewModel(
     fun onIntent(intent: ImportIntent) {
         when (intent) {
             is ImportIntent.EnterText -> _state.update {
-                it.copy(manualText = intent.text)
+                it.copy(manualText = intent.text, error = null)
             }
 
             is ImportIntent.FileSelected -> selectFile(intent.uri, intent.mimeType)
             ImportIntent.ProcessDocument -> processDocument()
             ImportIntent.ImportManually -> importManually()
 
-            ImportIntent.DismissError -> _state.update {
-                it.copy(error = null)
-            }
-
+            ImportIntent.DismissError -> _state.update { it.copy(error = null) }
             ImportIntent.ConfirmImport -> confirmImport()
             ImportIntent.DismissImport -> dismissImport()
 
             ImportIntent.OpenUrlSheet -> _state.update { it.copy(showUrlSheet = true) }
             ImportIntent.DismissUrlSheet -> _state.update {
-                it.copy(
-                    showUrlSheet = false,
-                    urlText = "",
-                    urlError = null
-                )
+                it.copy(showUrlSheet = false, urlText = "", urlError = null)
             }
 
             is ImportIntent.EnterUrl -> {
@@ -89,11 +82,8 @@ class ImportViewModel(
                     _state.update { it.copy(showOcrDownloadDialog = true) }
             }
 
-            ImportIntent.CameraLaunched ->
-                _state.update { it.copy(shouldLaunchCamera = false) }
-
+            ImportIntent.CameraLaunched -> _state.update { it.copy(shouldLaunchCamera = false) }
             is ImportIntent.CameraImageCaptured -> processOcrImage(intent.uri)
-
             ImportIntent.DownloadOcrData -> downloadOcrData()
             ImportIntent.DismissOcrDialog -> _state.update { it.copy(showOcrDownloadDialog = false) }
         }
@@ -117,9 +107,7 @@ class ImportViewModel(
             current.manualText.isNotBlank() -> importManually()
             current.selectedFileUri != null && current.selectedFileMimeType != null ->
                 importFile(current.selectedFileUri, current.selectedFileMimeType)
-            else -> viewModelScope.launch {
-                _effect.send(ShowError("Select a document or enter text first"))
-            }
+            else -> _state.update { it.copy(error = "Select a document or enter text first") }
         }
     }
 
@@ -130,10 +118,7 @@ class ImportViewModel(
 
                 if (modelState is ModelState.Ready && _state.value.showOcrDownloadDialog) {
                     _state.update {
-                        it.copy(
-                            showOcrDownloadDialog = false,
-                            shouldLaunchCamera = true
-                        )
+                        it.copy(showOcrDownloadDialog = false, shouldLaunchCamera = true)
                     }
                 }
             }
@@ -165,22 +150,36 @@ class ImportViewModel(
         }
 
         viewModelScope.launch {
-            _state.update { it.copy(isLoading = true) }
+            _state.update {
+                it.copy(
+                    isLoading = true,
+                    importProgress = ImportProgress.Segmenting,
+                    error = null
+                )
+            }
+
             inputTextManuallyUseCase(title, bodyText)
                 .onSuccess { document ->
                     _state.update {
                         it.copy(
                             isLoading = false,
+                            importProgress = null,
                             processedDocument = document,
-                            manualText = ""
+                            manualText = "",
+                            error = null
                         )
                     }
                 }
                 .onFailure { error ->
-                    _state.update { it.copy(isLoading = false) }
-                    _effect.send(
-                        ShowError(error.message ?: "Import failed")
-                    )
+                    val message = error.message ?: error::class.simpleName ?: "Import failed"
+                    _state.update {
+                        it.copy(
+                            isLoading = false,
+                            importProgress = null,
+                            error = message
+                        )
+                    }
+                    _effect.send(ShowError(message))
                 }
         }
     }
@@ -192,9 +191,7 @@ class ImportViewModel(
             "application/epub+zip" -> SourceType.Epub
             "application/x-fictionbook+xml", "text/xml", "application/xml" -> SourceType.Fb2
             else -> {
-                viewModelScope.launch {
-                    _effect.send(ShowError("Unsupported file type"))
-                }
+                _state.update { it.copy(error = "Unsupported file type") }
                 return
             }
         }
@@ -206,13 +203,11 @@ class ImportViewModel(
         }
 
         viewModelScope.launch {
-            _state.update { it.copy(isLoading = true, importProgress = null) }
+            _state.update { it.copy(isLoading = true, importProgress = null, error = null) }
             importDocumentUseCase(uri, title, sourceType)
                 .collect { progress ->
                     when (progress) {
-                        is ImportProgress.Processing -> {
-                            _state.update { it.copy(importProgress = progress) }
-                        }
+                        is ImportProgress.Processing -> _state.update { it.copy(importProgress = progress) }
 
                         is ImportProgress.Success -> {
                             _state.update {
@@ -222,13 +217,20 @@ class ImportViewModel(
                                     processedDocument = progress.processedDocument,
                                     selectedFileUri = null,
                                     selectedFileMimeType = null,
-                                    selectedFileName = null
+                                    selectedFileName = null,
+                                    error = null
                                 )
                             }
                         }
 
                         is ImportProgress.Error -> {
-                            _state.update { it.copy(isLoading = false, importProgress = null) }
+                            _state.update {
+                                it.copy(
+                                    isLoading = false,
+                                    importProgress = null,
+                                    error = progress.message
+                                )
+                            }
                             _effect.send(ShowError(progress.message))
                         }
 
@@ -241,7 +243,7 @@ class ImportViewModel(
     private fun importFromUrl() {
         val url = _state.value.urlText.trim()
         viewModelScope.launch {
-            _state.update { it.copy(isLoading = true, urlError = null) }
+            _state.update { it.copy(isLoading = true, urlError = null, error = null) }
             urlContentFetcher.fetchText(url)
                 .onSuccess { (title, text) ->
                     inputTextManuallyUseCase(title, text)
@@ -257,13 +259,15 @@ class ImportViewModel(
                             }
                         }
                         .onFailure { error ->
-                            _state.update { it.copy(isLoading = false) }
-                            _effect.send(ShowError(error.message ?: "Processing failed"))
+                            val message = error.message ?: "Processing failed"
+                            _state.update { it.copy(isLoading = false, error = message) }
+                            _effect.send(ShowError(message))
                         }
                 }
                 .onFailure { error ->
-                    _state.update { it.copy(isLoading = false) }
-                    _effect.send(ShowError(error.message ?: "Failed to fetch URL"))
+                    val message = error.message ?: "Failed to fetch URL"
+                    _state.update { it.copy(isLoading = false, error = message) }
+                    _effect.send(ShowError(message))
                 }
         }
     }
@@ -279,7 +283,7 @@ class ImportViewModel(
 
     private fun processOcrImage(uri: String) {
         viewModelScope.launch {
-            _state.update { it.copy(isLoading = true) }
+            _state.update { it.copy(isLoading = true, error = null) }
 
             runCatching { ocrEngine.recognize(uri) }
                 .onSuccess { text ->
@@ -291,18 +295,18 @@ class ImportViewModel(
 
                     inputTextManuallyUseCase(title, text)
                         .onSuccess { document ->
-                            _state.update {
-                                it.copy(isLoading = false, processedDocument = document)
-                            }
+                            _state.update { it.copy(isLoading = false, processedDocument = document) }
                         }
                         .onFailure { e ->
-                            _state.update { it.copy(isLoading = false) }
-                            _effect.send(ShowError(e.message ?: "Processing failed"))
+                            val message = e.message ?: "Processing failed"
+                            _state.update { it.copy(isLoading = false, error = message) }
+                            _effect.send(ShowError(message))
                         }
                 }
                 .onFailure { e ->
-                    _state.update { it.copy(isLoading = false) }
-                    _effect.send(ShowError(e.message ?: "OCR failed"))
+                    val message = e.message ?: "OCR failed"
+                    _state.update { it.copy(isLoading = false, error = message) }
+                    _effect.send(ShowError(message))
                 }
         }
     }
@@ -310,15 +314,16 @@ class ImportViewModel(
     private fun confirmImport() {
         val processed = _state.value.processedDocument ?: return
         viewModelScope.launch {
-            _state.update { it.copy(isLoading = true) }
+            _state.update { it.copy(isLoading = true, error = null) }
             saveDocumentUseCase(processed.document, processed.paragraphs)
                 .onSuccess {
                     _state.update { it.copy(processedDocument = null, isLoading = false) }
                     _effect.send(ImportEffect.NavigateToReader(processed.document.id))
                 }
                 .onFailure { error ->
-                    _state.update { it.copy(isLoading = false) }
-                    _effect.send(ShowError(error.message ?: "Save failed"))
+                    val message = error.message ?: "Save failed"
+                    _state.update { it.copy(isLoading = false, error = message) }
+                    _effect.send(ShowError(message))
                 }
         }
     }
