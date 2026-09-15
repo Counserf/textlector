@@ -24,6 +24,39 @@ struct iOSApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .onOpenURL { url in
+                    handleOpenedDocument(url)
+                }
+        }
+    }
+
+    private func handleOpenedDocument(_ url: URL) {
+        let lowerName = url.lastPathComponent.lowercased()
+        guard lowerName.hasSuffix(".fb2") || lowerName.hasSuffix(".fb2.zip") || lowerName.hasSuffix(".zip") else {
+            return
+        }
+
+        let didAccess = url.startAccessingSecurityScopedResource()
+        defer {
+            if didAccess {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        let fileManager = FileManager.default
+        let inbox = fileManager.temporaryDirectory.appendingPathComponent("TextLectorIncoming", isDirectory: true)
+
+        do {
+            try fileManager.createDirectory(at: inbox, withIntermediateDirectories: true)
+            let destination = inbox.appendingPathComponent(url.lastPathComponent)
+            if fileManager.fileExists(atPath: destination.path) {
+                try fileManager.removeItem(at: destination)
+            }
+            try fileManager.copyItem(at: url, to: destination)
+            MainViewControllerKt.handleIncomingFile(path: destination.path)
+        } catch {
+            // Files already copied into the app sandbox can still be consumed directly.
+            MainViewControllerKt.handleIncomingFile(path: url.path)
         }
     }
 }
