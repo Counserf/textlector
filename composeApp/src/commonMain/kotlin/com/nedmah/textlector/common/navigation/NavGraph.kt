@@ -22,9 +22,14 @@ import androidx.navigation.toRoute
 import com.nedmah.textlector.common.platform.file.IncomingFileStore
 import com.nedmah.textlector.ui.presentation.components.BottomNavBar
 import com.nedmah.textlector.ui.presentation.components.MiniPlayer
+import com.nedmah.textlector.ui.presentation.import_from.ImportIntent
+import com.nedmah.textlector.ui.presentation.import_from.ImportViewModel
 import com.nedmah.textlector.ui.presentation.player.PlayerIntent
 import com.nedmah.textlector.ui.presentation.player.PlayerViewModel
 import org.koin.compose.koinInject
+import org.koin.compose.viewmodel.koinViewModel
+
+private const val FICTIONBOOK_MIME = "application/x-fictionbook+xml"
 
 @Composable
 fun TextLectorNavGraph() {
@@ -34,14 +39,25 @@ fun TextLectorNavGraph() {
 
     val playerViewModel : PlayerViewModel = koinInject()
     val playerState by playerViewModel.state.collectAsStateWithLifecycle()
+    val importViewModel: ImportViewModel = koinViewModel()
     val incomingPath by IncomingFileStore.pendingPath.collectAsStateWithLifecycle()
 
     LaunchedEffect(incomingPath) {
-        if (incomingPath != null && currentBackStack?.destination?.route != ImportRoute::class.qualifiedName) {
+        val path = incomingPath ?: return@LaunchedEffect
+
+        if (currentBackStack?.destination?.route != ImportRoute::class.qualifiedName) {
             navController.navigate(ImportRoute) {
                 launchSingleTop = true
             }
         }
+
+        importViewModel.onIntent(
+            ImportIntent.FileSelected(
+                uri = path,
+                mimeType = FICTIONBOOK_MIME
+            )
+        )
+        IncomingFileStore.consume()
     }
 
     val showBottomBar = currentBackStack?.destination?.route in listOf(
@@ -105,7 +121,8 @@ fun TextLectorNavGraph() {
                     com.nedmah.textlector.ui.presentation.import_from.ImportScreenRoot(
                         onNavigateToReader = { documentId ->
                             navController.navigate(ReaderRoute(documentId))
-                        }
+                        },
+                        viewModel = importViewModel
                     )
                 }
 
