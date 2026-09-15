@@ -1,0 +1,66 @@
+name: Cancel stale iOS runs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/cancel-stale-ios-runs.yml'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  cancel-stale:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cancel all older iOS workflow runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          runs="$(gh api \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "/repos/$REPO/actions/runs?per_page=100")"
+
+          latest_id="$(jq -r '
+            [.workflow_runs[]
+             | select(.path == ".github/workflows/build-ios-unsigned.yml")]
+            | sort_by(.run_number)
+            | last
+            | .id // empty
+          ' <<<"$runs")"
+
+          if [ -z "$latest_id" ]; then
+            echo 'No iOS workflow run found.'
+            exit 0
+          fi
+
+          echo "Keeping latest iOS run: $latest_id"
+
+          mapfile -t stale_ids < <(jq -r --argjson keep "$latest_id" '
+            .workflow_runs[]
+            | select(.path == ".github/workflows/build-ios-unsigned.yml")
+            | select(.status == "queued" or .status == "in_progress" or .status == "waiting" or .status == "pending")
+            | select(.id != $keep)
+            | .id
+          ' <<<"$runs")
+
+          if [ "${#stale_ids[@]}" -eq 0 ]; then
+            echo 'No stale iOS runs to cancel.'
+            exit 0
+          fi
+
+          for run_id in "${stale_ids[@]}"; do
+            echo "Cancelling stale iOS run: $run_id"
+            gh api \
+              --method POST \
+              -H 'Accept: application/vnd.github+json' \
+              -H 'X-GitHub-Api-Version: 2022-11-28' \
+              "/repos/$REPO/actions/runs/$run_id/cancel" || true
+          done
