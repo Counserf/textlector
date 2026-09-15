@@ -4,6 +4,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nedmah.textlector.common.platform.logging.CrashReporter
 import com.nedmah.textlector.common.platform.tts.TtsEngine
+import com.nedmah.textlector.domain.model.TtsEngineType
+import com.nedmah.textlector.domain.model.VoiceGender
+import com.nedmah.textlector.domain.model.VoiceRegistry
 import com.nedmah.textlector.domain.usecase.GetDocumentUseCase
 import com.nedmah.textlector.domain.usecase.GetParagraphsUseCase
 import com.nedmah.textlector.domain.usecase.GetPreferencesUseCase
@@ -69,7 +72,23 @@ class PlayerViewModel(
     private fun observePreferences() {
         viewModelScope.launch {
             getPreferencesUseCase().collect { prefs ->
-                _state.update { it.copy(playbackSpeed = prefs.speechSpeed) }
+                val voiceModel = VoiceRegistry.getById(prefs.resolveVoiceId())
+                val modelLabel = when (prefs.engineType) {
+                    TtsEngineType.SYSTEM -> "Системный TTS · ${prefs.language.uppercase()}"
+                    TtsEngineType.PIPER -> "Piper · ${voiceModel.displayName}"
+                    TtsEngineType.SUPERTONIC -> {
+                        val voice = if (prefs.speechVoice == VoiceGender.MALE) "M1" else "F1"
+                        "Supertonic v3 · $voice · ${prefs.language.uppercase()}"
+                    }
+                }
+
+                _state.update {
+                    it.copy(
+                        playbackSpeed = prefs.speechSpeed,
+                        engineType = prefs.engineType,
+                        activeModelLabel = modelLabel
+                    )
+                }
             }
         }
 
@@ -87,7 +106,7 @@ class PlayerViewModel(
                     currentUtteranceId++
                     playbackJob?.cancel()
                     ttsEngine.stop()
-                    _state.update { it.copy(isPlaying = false, isBuffering = false) }
+                    _state.update { it.copy(isPlaying = false, isBuffering = false, errorMessage = null) }
                 }
                 if (wasPlaying) play()
             }
@@ -104,13 +123,14 @@ class PlayerViewModel(
         pause()
 
         loadDocumentJob = viewModelScope.launch {
-            _state.update { it.copy(isLoading = true) }
+            _state.update { it.copy(isLoading = true, errorMessage = null) }
             updateLastOpenedUseCase(documentId)
 
             launch {
                 getDocumentUseCase(documentId).collect { document ->
                     if (document == null) {
                         _effect.send(PlayerEffect.ShowError("Document not found"))
+                        _state.update { it.copy(errorMessage = "Документ не найден") }
                         return@collect
                     }
                     _state.update {
@@ -155,15 +175,23 @@ class PlayerViewModel(
         val utteranceId = ++currentUtteranceId
         playbackJob?.cancel()
         ttsEngine.stop()
-        _state.update { it.copy(isPlaying = true) }
+        _state.update { it.copy(isPlaying = true, errorMessage = null) }
 
         playbackJob = viewModelScope.launch {
             try {
                 ttsEngine.speak(currentIndex, _state.value.playbackSpeed)
             } catch (e: Exception) {
                 if (e is CancellationException) return@launch
+                val message = e.message?.takeIf { it.isNotBlank() }
+                    ?: "Ошибка генерации аудио"
                 CrashReporter.recordException(e, "speak failed at index=$currentIndex")
-                _state.update { it.copy(isPlaying = false) }
+                _state.update {
+                    it.copy(
+                        isPlaying = false,
+                        isBuffering = false,
+                        errorMessage = message
+                    )
+                }
                 return@launch
             }
 
@@ -205,7 +233,7 @@ class PlayerViewModel(
         currentUtteranceId++
         playbackJob?.cancel()
 
-        _state.update { it.copy(currentParagraphIndex = safeIndex) }
+        _state.update { it.copy(currentParagraphIndex = safeIndex, errorMessage = null) }
         scheduleSaveProgress(safeIndex)
 
         if (wasPlaying) play()
@@ -218,7 +246,7 @@ class PlayerViewModel(
         val wasPlaying = _state.value.isPlaying
 
         currentUtteranceId++
-        _state.update { it.copy(currentParagraphIndex = safeIndex) }
+        _state.update { it.copy(currentParagraphIndex = safeIndex, errorMessage = null) }
         scheduleSaveProgress(safeIndex)
 
         playerLog("seekTo($safeIndex): clear queue")
@@ -227,7 +255,7 @@ class PlayerViewModel(
     }
 
     private fun changeSpeed(speed: Float) {
-        _state.update { it.copy(playbackSpeed = speed) }
+        _state.update { it.copy(playbackSpeed = speed, errorMessage = null) }
         if (_state.value.isPlaying) {
             pause()
             play()
