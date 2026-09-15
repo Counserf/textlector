@@ -2,6 +2,7 @@ package com.nedmah.textlector.ui.presentation.player
 
 import com.nedmah.textlector.domain.model.Document
 import com.nedmah.textlector.domain.model.Paragraph
+import com.nedmah.textlector.domain.model.TtsEngineType
 
 data class PlayerState(
     val document: Document? = null,
@@ -11,6 +12,9 @@ data class PlayerState(
     val isLoading: Boolean = false,
     val isBuffering: Boolean = false, // generating audio
     val playbackSpeed: Float = 1f,
+    val engineType: TtsEngineType = TtsEngineType.SYSTEM,
+    val activeModelLabel: String = "Системный TTS",
+    val errorMessage: String? = null,
 ) {
     val currentParagraph: Paragraph?
         get() = paragraphs.getOrNull(currentParagraphIndex)
