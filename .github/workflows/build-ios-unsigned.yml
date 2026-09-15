@@ -1,0 +1,144 @@
+name: Build unsigned iOS IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-ios-unsigned.yml'
+      - 'iosApp/**'
+      - 'composeApp/**'
+      - 'gradle/**'
+      - 'gradle.properties'
+      - 'settings.gradle.kts'
+      - 'build.gradle.kts'
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  build-ios:
+    runs-on: macos-15
+    timeout-minutes: 90
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Checkout TextLector
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Prepare Gradle
+        shell: bash
+        run: |
+          chmod +x ./gradlew
+          cat > local.properties <<'EOF'
+          KEYSTORE_PASSWORD=ci-placeholder
+          KEY_PASSWORD=ci-placeholder
+          EOF
+
+      - name: Cache sherpa-onnx iOS frameworks
+        id: sherpa-cache
+        uses: actions/cache@v4
+        with:
+          path: iosApp/Frameworks
+          key: sherpa-onnx-ios-v1.12.34-macos15
+
+      - name: Build sherpa-onnx XCFrameworks
+        if: steps.sherpa-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          brew install wget ninja || true
+          rm -rf /tmp/sherpa-onnx
+          git clone --depth 1 --branch v1.12.34 https://github.com/k2-fsa/sherpa-onnx.git /tmp/sherpa-onnx
+          cd /tmp/sherpa-onnx
+          ./build-ios.sh
+          cd "$GITHUB_WORKSPACE"
+          mkdir -p iosApp/Frameworks
+          rm -rf iosApp/Frameworks/sherpa-onnx.xcframework iosApp/Frameworks/onnxruntime.xcframework
+          cp -R /tmp/sherpa-onnx/build-ios/sherpa-onnx.xcframework iosApp/Frameworks/
+          cp -R /tmp/sherpa-onnx/build-ios/ios-onnxruntime/onnxruntime.xcframework iosApp/Frameworks/
+
+      - name: Verify native frameworks
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test -d iosApp/Frameworks/sherpa-onnx.xcframework
+          test -d iosApp/Frameworks/onnxruntime.xcframework
+          find iosApp/Frameworks -maxdepth 3 -type f | head -80
+
+      - name: Resolve Swift packages
+        shell: bash
+        run: |
+          set -euxo pipefail
+          xcodebuild -resolvePackageDependencies \
+            -project iosApp/iosApp.xcodeproj \
+            -scheme iosApp
+
+      - name: Build unsigned device app
+        shell: bash
+        run: |
+          set -euxo pipefail
+          xcodebuild \
+            -project iosApp/iosApp.xcodeproj \
+            -scheme iosApp \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$GITHUB_WORKSPACE/build/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY='' \
+            DEVELOPMENT_TEAM='' \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            build
+
+      - name: Bundle Supertonic resources
+        shell: bash
+        run: |
+          set -euxo pipefail
+          APP_PATH="$(find "$GITHUB_WORKSPACE/build/DerivedData/Build/Products/Release-iphoneos" -maxdepth 1 -name '*.app' -print -quit)"
+          test -n "$APP_PATH"
+          rm -rf /tmp/supertonic-kmp
+          git clone --depth 1 https://github.com/nedmah/supertonic-kmp.git /tmp/supertonic-kmp
+          RESOURCE_DIR="$(find /tmp/supertonic-kmp -type d -path '*/composeResources/files/supertonic' -print -quit || true)"
+          if [ -n "$RESOURCE_DIR" ] && [ -d "$RESOURCE_DIR" ]; then
+            rm -rf "$APP_PATH/supertonic"
+            cp -R "$RESOURCE_DIR" "$APP_PATH/supertonic"
+            echo "Bundled Supertonic resources from $RESOURCE_DIR"
+          else
+            echo "No standalone Supertonic resource directory found; continuing because the KMP framework may already contain the resources."
+          fi
+
+      - name: Package unsigned IPA
+        shell: bash
+        run: |
+          set -euxo pipefail
+          APP_PATH="$(find "$GITHUB_WORKSPACE/build/DerivedData/Build/Products/Release-iphoneos" -maxdepth 1 -name '*.app' -print -quit)"
+          test -n "$APP_PATH"
+          rm -rf Payload TextLector-unsigned.ipa
+          mkdir Payload
+          cp -R "$APP_PATH" Payload/
+          /usr/bin/zip -qry TextLector-unsigned.ipa Payload
+          unzip -l TextLector-unsigned.ipa | head -60
+          if codesign -dv "$APP_PATH" >/dev/null 2>&1; then
+            echo 'WARNING: app bundle contains a code signature.'
+          else
+            echo 'Confirmed: app bundle is unsigned.'
+          fi
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: TextLector-unsigned
+          path: TextLector-unsigned.ipa
+          if-no-files-found: error
+          compression-level: 0
