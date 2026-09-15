@@ -6,6 +6,9 @@ import com.nedmah.textlector.domain.model.ProcessedDocument
 
 data class ImportState(
     val manualText: String = "",
+    val selectedFileUri: String? = null,
+    val selectedFileMimeType: String? = null,
+    val selectedFileName: String? = null,
     val urlText: String = "",
     val isLoading: Boolean = false,
     val error: String? = null,
@@ -16,5 +19,4 @@ data class ImportState(
     val shouldLaunchCamera: Boolean = false,
     val showOcrDownloadDialog: Boolean = false,
     val ocrDataState: ModelState = ModelState.NotDownloaded,
-) {
-}
+)
