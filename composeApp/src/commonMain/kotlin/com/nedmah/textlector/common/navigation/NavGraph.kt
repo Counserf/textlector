@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -18,6 +19,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
+import com.nedmah.textlector.common.platform.file.IncomingFileStore
 import com.nedmah.textlector.ui.presentation.components.BottomNavBar
 import com.nedmah.textlector.ui.presentation.components.MiniPlayer
 import com.nedmah.textlector.ui.presentation.player.PlayerIntent
@@ -32,6 +34,15 @@ fun TextLectorNavGraph() {
 
     val playerViewModel : PlayerViewModel = koinInject()
     val playerState by playerViewModel.state.collectAsStateWithLifecycle()
+    val incomingPath by IncomingFileStore.pendingPath.collectAsStateWithLifecycle()
+
+    LaunchedEffect(incomingPath) {
+        if (incomingPath != null && currentBackStack?.destination?.route != ImportRoute::class.qualifiedName) {
+            navController.navigate(ImportRoute) {
+                launchSingleTop = true
+            }
+        }
+    }
 
     val showBottomBar = currentBackStack?.destination?.route in listOf(
         LibraryRoute::class.qualifiedName,
