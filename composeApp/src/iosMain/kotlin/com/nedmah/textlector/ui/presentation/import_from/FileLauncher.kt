@@ -9,6 +9,9 @@ import platform.UIKit.UIDocumentPickerViewController
 import platform.UniformTypeIdentifiers.UTType
 import platform.darwin.NSObject
 
+private const val FICTIONBOOK_MIME = "application/x-fictionbook+xml"
+private const val ZIP_MIME = "application/zip"
+
 @Composable
 actual fun rememberFileLauncher(
     onResult: (uri: String?, mimeType: String) -> Unit
@@ -17,7 +20,12 @@ actual fun rememberFileLauncher(
     val delegateHolder = remember { mutableListOf<NSObject>() }
 
     return { mimeType ->
-        val types = listOf(UTType.typeWithMIMEType(mimeType)).filterNotNull()
+        val primaryType = UTType.typeWithMIMEType(mimeType)
+        val types = if (mimeType == FICTIONBOOK_MIME) {
+            listOfNotNull(primaryType, UTType.typeWithMIMEType(ZIP_MIME))
+        } else {
+            listOfNotNull(primaryType)
+        }
 
         val picker = UIDocumentPickerViewController(
             forOpeningContentTypes = types,
