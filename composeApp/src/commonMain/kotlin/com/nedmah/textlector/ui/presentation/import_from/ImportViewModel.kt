@@ -32,12 +32,10 @@ class ImportViewModel(
     private val downloadOcrDataUseCase: DownloadOcrDataUseCase
 ) : ViewModel() {
 
-    private val _state =
-        MutableStateFlow(ImportState())
+    private val _state = MutableStateFlow(ImportState())
     val state = _state.asStateFlow()
 
-    private val _effect =
-        Channel<ImportEffect>(Channel.BUFFERED)
+    private val _effect = Channel<ImportEffect>(Channel.BUFFERED)
     val effect = _effect.receiveAsFlow()
 
     private var downloadJob: Job? = null
@@ -49,18 +47,15 @@ class ImportViewModel(
     fun onIntent(intent: ImportIntent) {
         when (intent) {
             is ImportIntent.EnterText -> _state.update {
-                it.copy(
-                    manualText = intent.text
-                )
+                it.copy(manualText = intent.text)
             }
 
-            is ImportIntent.FileSelected -> importFile(intent.uri, intent.mimeType)
-
+            is ImportIntent.FileSelected -> selectFile(intent.uri, intent.mimeType)
+            ImportIntent.ProcessDocument -> processDocument()
             ImportIntent.ImportManually -> importManually()
+
             ImportIntent.DismissError -> _state.update {
-                it.copy(
-                    error = null
-                )
+                it.copy(error = null)
             }
 
             ImportIntent.ConfirmImport -> confirmImport()
@@ -100,8 +95,31 @@ class ImportViewModel(
             is ImportIntent.CameraImageCaptured -> processOcrImage(intent.uri)
 
             ImportIntent.DownloadOcrData -> downloadOcrData()
-
             ImportIntent.DismissOcrDialog -> _state.update { it.copy(showOcrDownloadDialog = false) }
+        }
+    }
+
+    private fun selectFile(uri: String, mimeType: String) {
+        val fileName = uri.substringAfterLast("/")
+        _state.update {
+            it.copy(
+                selectedFileUri = uri,
+                selectedFileMimeType = mimeType,
+                selectedFileName = fileName,
+                error = null
+            )
+        }
+    }
+
+    private fun processDocument() {
+        val current = _state.value
+        when {
+            current.manualText.isNotBlank() -> importManually()
+            current.selectedFileUri != null && current.selectedFileMimeType != null ->
+                importFile(current.selectedFileUri, current.selectedFileMimeType)
+            else -> viewModelScope.launch {
+                _effect.send(ShowError("Select a document or enter text first"))
+            }
         }
     }
 
@@ -161,9 +179,7 @@ class ImportViewModel(
                 .onFailure { error ->
                     _state.update { it.copy(isLoading = false) }
                     _effect.send(
-                        ImportEffect.ShowError(
-                            error.message ?: "Import failed"
-                        )
+                        ShowError(error.message ?: "Import failed")
                     )
                 }
         }
@@ -177,13 +193,17 @@ class ImportViewModel(
             "application/x-fictionbook+xml", "text/xml", "application/xml" -> SourceType.Fb2
             else -> {
                 viewModelScope.launch {
-                    _effect.send(ImportEffect.ShowError("Unsupported file type"))
+                    _effect.send(ShowError("Unsupported file type"))
                 }
                 return
             }
         }
 
-        val title = uri.substringAfterLast("/").substringBeforeLast(".")
+        val fileName = uri.substringAfterLast("/")
+        val title = when {
+            fileName.endsWith(".fb2.zip", ignoreCase = true) -> fileName.dropLast(8)
+            else -> fileName.substringBeforeLast(".")
+        }
 
         viewModelScope.launch {
             _state.update { it.copy(isLoading = true, importProgress = null) }
@@ -199,7 +219,10 @@ class ImportViewModel(
                                 it.copy(
                                     isLoading = false,
                                     importProgress = null,
-                                    processedDocument = progress.processedDocument
+                                    processedDocument = progress.processedDocument,
+                                    selectedFileUri = null,
+                                    selectedFileMimeType = null,
+                                    selectedFileName = null
                                 )
                             }
                         }
@@ -274,12 +297,12 @@ class ImportViewModel(
                         }
                         .onFailure { e ->
                             _state.update { it.copy(isLoading = false) }
-                            _effect.send(ImportEffect.ShowError(e.message ?: "Processing failed"))
+                            _effect.send(ShowError(e.message ?: "Processing failed"))
                         }
                 }
                 .onFailure { e ->
                     _state.update { it.copy(isLoading = false) }
-                    _effect.send(ImportEffect.ShowError(e.message ?: "OCR failed"))
+                    _effect.send(ShowError(e.message ?: "OCR failed"))
                 }
         }
     }
@@ -295,7 +318,7 @@ class ImportViewModel(
                 }
                 .onFailure { error ->
                     _state.update { it.copy(isLoading = false) }
-                    _effect.send(ImportEffect.ShowError(error.message ?: "Save failed"))
+                    _effect.send(ShowError(error.message ?: "Save failed"))
                 }
         }
     }
@@ -303,5 +326,4 @@ class ImportViewModel(
     private fun dismissImport() {
         _state.update { it.copy(processedDocument = null) }
     }
-
 }
