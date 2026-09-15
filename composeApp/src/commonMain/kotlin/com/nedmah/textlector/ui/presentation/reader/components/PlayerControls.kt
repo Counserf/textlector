@@ -21,6 +21,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
@@ -46,6 +47,9 @@ fun PlayerControls(
     progress: Float,
     isEnabled: Boolean,
     isLoading: Boolean,
+    isGenerating: Boolean,
+    modelLabel: String,
+    errorMessage: String?,
     elapsed: String,
     remaining: String,
     canGoPrevious: Boolean,
@@ -64,6 +68,40 @@ fun PlayerControls(
         shadowElevation = 8.dp
     ) {
         Column {
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 10.dp)
+            ) {
+                Text(
+                    text = modelLabel,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                if (isGenerating) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "Генерация отрывка…",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                if (!errorMessage.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = errorMessage,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
 
             PlayerProgressBar(
                 progress = progress,
@@ -133,13 +171,13 @@ fun PlayerControls(
                             { if (isPlaying) onPause() else onPlay() },
                         contentAlignment = Alignment.Center
                     ) {
-                        if (isLoading) {
+                        if (isLoading || isGenerating) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(24.dp),
                                 color = Color.White,
                                 strokeWidth = 2.dp
                             )
-                        } else
+                        } else {
                             Crossfade(
                                 targetState = isPlaying,
                                 animationSpec = tween(200)
@@ -154,6 +192,7 @@ fun PlayerControls(
                                     modifier = Modifier.size(24.dp)
                                 )
                             }
+                        }
                     }
 
                     IconButton(
