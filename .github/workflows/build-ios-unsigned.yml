@@ -161,16 +161,29 @@ jobs:
           set -euxo pipefail
           APP_PATH="$(find "$GITHUB_WORKSPACE/build/DerivedData/Build/Products/Release-iphoneos" -maxdepth 1 -name '*.app' -print -quit)"
           test -n "$APP_PATH"
+
           rm -rf /tmp/supertonic-kmp
           git clone --depth 1 https://github.com/nedmah/supertonic-kmp.git /tmp/supertonic-kmp
-          RESOURCE_DIR="$(find /tmp/supertonic-kmp -type d -path '*/composeResources/files/supertonic' -print -quit || true)"
-          if [ -n "$RESOURCE_DIR" ] && [ -d "$RESOURCE_DIR" ]; then
-            rm -rf "$APP_PATH/supertonic"
-            cp -R "$RESOURCE_DIR" "$APP_PATH/supertonic"
-            echo "Bundled Supertonic resources from $RESOURCE_DIR"
-          else
-            echo "No standalone Supertonic resource directory found; continuing because the KMP framework may already contain the resources."
+
+          # Current supertonic-kmp keeps voice styles here. Keep a fallback for older layouts.
+          RESOURCE_DIR="/tmp/supertonic-kmp/core/src/commonMain/resources/supertonic"
+          if [ ! -d "$RESOURCE_DIR" ]; then
+            RESOURCE_DIR="$(find /tmp/supertonic-kmp -type d -path '*/composeResources/files/supertonic' -print -quit || true)"
           fi
+
+          test -n "$RESOURCE_DIR"
+          test -d "$RESOURCE_DIR"
+          test -f "$RESOURCE_DIR/voice_styles/M1.json"
+          test -f "$RESOURCE_DIR/voice_styles/F1.json"
+
+          rm -rf "$APP_PATH/supertonic"
+          cp -R "$RESOURCE_DIR" "$APP_PATH/supertonic"
+
+          # Fail the build instead of producing a broken IPA with silently missing voices.
+          test -f "$APP_PATH/supertonic/voice_styles/M1.json"
+          test -f "$APP_PATH/supertonic/voice_styles/F1.json"
+          echo "Bundled Supertonic resources from $RESOURCE_DIR"
+          find "$APP_PATH/supertonic/voice_styles" -maxdepth 1 -type f -name '*.json' -print
 
       - name: Package unsigned IPA
         shell: bash
@@ -182,7 +195,8 @@ jobs:
           mkdir Payload
           cp -R "$APP_PATH" Payload/
           /usr/bin/zip -qry TextLector-unsigned.ipa Payload
-          unzip -l TextLector-unsigned.ipa | sed -n '1,60p'
+          unzip -l TextLector-unsigned.ipa | sed -n '1,120p'
+          unzip -l TextLector-unsigned.ipa | grep -E 'supertonic/voice_styles/(M1|F1)\.json'
           if codesign -dv "$APP_PATH" >/dev/null 2>&1; then
             echo 'WARNING: app bundle contains a code signature.'
           else
