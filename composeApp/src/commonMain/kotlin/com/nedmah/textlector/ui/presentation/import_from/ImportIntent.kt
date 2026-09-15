@@ -1,17 +1,14 @@
 package com.nedmah.textlector.ui.presentation.import_from
 
 interface ImportIntent {
-    data class EnterText(val text: String) :
-        ImportIntent
+    data class EnterText(val text: String) : ImportIntent
 
     data class FileSelected(val uri: String, val mimeType: String) : ImportIntent
+    data object ProcessDocument : ImportIntent
     data object ImportManually : ImportIntent
     data object DismissError : ImportIntent
-    data object ConfirmImport :
-        ImportIntent // bottom sheet
-
-    data object DismissImport :
-        ImportIntent // bottom sheet
+    data object ConfirmImport : ImportIntent
+    data object DismissImport : ImportIntent
 
     data object OpenUrlSheet : ImportIntent
     data object DismissUrlSheet : ImportIntent
