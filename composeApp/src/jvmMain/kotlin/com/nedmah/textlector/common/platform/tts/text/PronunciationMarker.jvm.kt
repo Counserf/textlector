@@ -5,4 +5,6 @@ actual class PronunciationMarker actual constructor() {
 
     actual suspend fun prepare(text: String, language: String): String =
         common.process(text, language)
+
+    actual fun releaseResources() = Unit
 }
