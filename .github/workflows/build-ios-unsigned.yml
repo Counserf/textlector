@@ -90,6 +90,12 @@ jobs:
           KEY_PASSWORD=ci-placeholder
           EOF
 
+      - name: Run shared TTS tests
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ./gradlew :composeApp:jvmTest
+
       - name: Cache sherpa-onnx iOS frameworks
         id: sherpa-cache
         uses: actions/cache@v4
