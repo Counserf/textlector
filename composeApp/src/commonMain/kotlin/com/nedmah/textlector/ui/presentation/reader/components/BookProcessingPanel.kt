@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -14,11 +13,17 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
+import com.nedmah.textlector.common.platform.logging.TtsDiagnosticLog
 import com.nedmah.textlector.common.platform.tts.BookProcessingState
 
 @Composable
@@ -28,6 +33,7 @@ fun BookProcessingPanel(
     modifier: Modifier = Modifier,
 ) {
     if (state.totalParagraphs <= 0) return
+    var copied by remember { mutableStateOf(false) }
 
     Surface(
         modifier = modifier.fillMaxWidth(),
@@ -64,6 +70,20 @@ fun BookProcessingPanel(
 
             state.error?.let {
                 Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            }
+
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                TextButton(onClick = {
+                    copied = TtsDiagnosticLog.copyToClipboard()
+                }) {
+                    Text(if (copied) "Лог скопирован" else "Скопировать TTS-лог")
+                }
+                TextButton(onClick = {
+                    TtsDiagnosticLog.clear()
+                    copied = false
+                }) {
+                    Text("Очистить лог")
+                }
             }
         }
     }
@@ -103,13 +123,11 @@ private fun ProcessingStage(
             Text("Готово: $readyText", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         if (running && currentIndex != null) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "Сейчас: отрывок ${currentIndex + 1}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
+            Text(
+                "Сейчас: отрывок ${currentIndex + 1}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary
+            )
         } else if (done >= total && total > 0) {
             Text("Готово полностью", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
