@@ -1,8 +1,10 @@
 package com.nedmah.textlector.ui.presentation.reader
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.weight
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
@@ -10,11 +12,13 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nedmah.textlector.domain.util.formatMinutes
 import com.nedmah.textlector.ui.presentation.player.PlayerIntent
 import com.nedmah.textlector.ui.presentation.player.PlayerState
 import com.nedmah.textlector.ui.presentation.player.PlayerViewModel
+import com.nedmah.textlector.ui.presentation.reader.components.BookProcessingPanel
 import com.nedmah.textlector.ui.presentation.reader.components.PlayerControls
 import com.nedmah.textlector.ui.presentation.reader.components.ReaderTopBar
 import org.koin.compose.koinInject
@@ -27,7 +31,6 @@ fun ReaderScreenRoot(
     readerViewModel: ReaderViewModel = koinViewModel(),
     playerViewModel: PlayerViewModel = koinInject()
 ){
-
     val readerState by readerViewModel.state.collectAsStateWithLifecycle()
     val playerState by playerViewModel.state.collectAsStateWithLifecycle()
 
@@ -44,14 +47,12 @@ fun ReaderScreenRoot(
         }
     }
 
-
     ReaderScreen(
         readerState = readerState,
         playerState = playerState,
         onReaderIntent = readerViewModel::onIntent,
         onPlayerIntent = playerViewModel::onIntent
     )
-
 }
 
 @Composable
@@ -87,9 +88,7 @@ fun ReaderScreen(
                 canGoPrevious = playerState.currentParagraphIndex > 0,
                 elapsed = formatMinutes(playerState.elapsedMinutes),
                 remaining = "-${formatMinutes(playerState.remainingMinutes)}",
-                onPlay = {
-                    onPlayerIntent(PlayerIntent.Play)
-                },
+                onPlay = { onPlayerIntent(PlayerIntent.Play) },
                 onPause = { onPlayerIntent(PlayerIntent.Pause) },
                 onNext = { onPlayerIntent(PlayerIntent.NextParagraph) },
                 onPrevious = { onPlayerIntent(PlayerIntent.PreviousParagraph) },
@@ -102,27 +101,32 @@ fun ReaderScreen(
         }
     ) { paddingValues ->
         if (readerState.isLoading) {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
             }
         } else {
-            ReaderContent(
-                paragraphs = readerState.paragraphs,
-                currentParagraphIndex = playerState.currentParagraphIndex,
-                isPlaying = playerState.isPlaying,
-                fontSize = readerState.fontSize,
-                onParagraphClick = { index ->
-                    onPlayerIntent(PlayerIntent.SeekToParagraph(index))
-                    if (!playerState.isPlaying) {
-                        onPlayerIntent(PlayerIntent.Play)
-                    }
-                },
-                modifier = Modifier.padding(paddingValues)
-            )
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues)
+            ) {
+                BookProcessingPanel(
+                    state = readerState.processing,
+                    onStartAudioGeneration = { onReaderIntent(ReaderIntent.StartAudioGeneration) },
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                )
+                ReaderContent(
+                    paragraphs = readerState.paragraphs,
+                    currentParagraphIndex = playerState.currentParagraphIndex,
+                    isPlaying = playerState.isPlaying,
+                    fontSize = readerState.fontSize,
+                    onParagraphClick = { index ->
+                        onPlayerIntent(PlayerIntent.SeekToParagraph(index))
+                        if (!playerState.isPlaying) onPlayerIntent(PlayerIntent.Play)
+                    },
+                    modifier = Modifier.weight(1f)
+                )
+            }
         }
     }
-
 }
