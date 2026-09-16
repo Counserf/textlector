@@ -81,7 +81,9 @@ val dataModule = module {
     single {
         val engine = get<TtsEngine>()
         val isBuffering = (engine as SwitchableTtsEngine).isBuffering
-        PlayerViewModel(get(), get(), get(), get(), get(), engine, isBuffering, get())
+        PlayerViewModel(
+            get(), get(), get(), get(), get(), engine, isBuffering, get(), get()
+        )
     }
     viewModel {
         LibraryViewModel(get(), get(), get(), get(), get(), get(), get())
