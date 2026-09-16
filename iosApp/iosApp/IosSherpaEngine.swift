@@ -12,6 +12,7 @@ import ComposeApp
     private let repository: IosVoiceModelRepositoryImpl
     private var isModelLoaded = false
     private var paragraphs: [ComposeApp.LectorParagraph] = []
+    private var currentLanguage: String = "ru"
 
     init(repository: IosVoiceModelRepositoryImpl) {
         self.repository = repository
@@ -25,7 +26,10 @@ import ComposeApp
         guard isModelLoaded else { return }
         guard index >= 0 && Int(index) < paragraphs.count else { return }
         let text = paragraphs[Int(index)].text
-        bridge.speak(text: text, speed: speed)
+        let prepared = currentLanguage.lowercased().hasPrefix("ru")
+            ? RussianHomographResolver.shared.process(text)
+            : text
+        bridge.speak(text: prepared, speed: speed)
     }
 
     func loadVoice(model: VoiceModel) async throws {
@@ -33,6 +37,7 @@ import ComposeApp
             return
         }
 
+        currentLanguage = model.language
         bridge.loadModel(
             onnxPath: path.onnxPath,
             tokensPath: path.tokensPath,
@@ -42,7 +47,10 @@ import ComposeApp
     }
 
     func generate(text: String, speed: Float) async throws -> KotlinByteArray {
-        let data = bridge.generateAudio(text: text, speed: speed)
+        let prepared = currentLanguage.lowercased().hasPrefix("ru")
+            ? RussianHomographResolver.shared.process(text)
+            : text
+        let data = bridge.generateAudio(text: prepared, speed: speed)
         let bytes = [UInt8](data)
         let result = KotlinByteArray(size: Int32(bytes.count))
         for (i, byte) in bytes.enumerated() {
