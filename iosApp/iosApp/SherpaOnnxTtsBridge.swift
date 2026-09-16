@@ -8,7 +8,9 @@
 import Foundation
 import AVFAudio
 import Darwin
+import ComposeApp
 
+private let kSherpaMaxChunkLength = 240
 
 @objc public class SherpaOnnxTtsBridge: NSObject, AVAudioPlayerDelegate {
 
@@ -18,13 +20,15 @@ import Darwin
     private var currentToken: Int = 0
     private let generateQueue = DispatchQueue(label: "com.lector.sherpa.generate")
 
+    private func diag(_ message: String) {
+        TtsDiagnosticLog.shared.append(tag: "PiperBridge", message: message)
+    }
 
     @objc public func extractTarBz2(archivePath: String, destPath: String) -> Bool {
         guard let decompressed = Bz2Wrapper.decompressBz2File(archivePath) else {
             return false
         }
 
-        // Parse tar
         let fileManager = FileManager.default
         var offset = 0
         let blockSize = 512
@@ -84,13 +88,13 @@ import Darwin
         withUnsafePointer(to: &config) { ptr in
             tts = SherpaOnnxOfflineTtsWrapper(config: ptr)
         }
+        diag("loadModel ready=\(tts != nil)")
     }
 
     @objc public func speak(text: String, speed: Float) {
-        guard let tts = tts else { return }
-        let preparedText = RussianPronunciationDictionary.shared.process(text)
-        let audio = tts.generate(text: preparedText, sid: 0, speed: speed)
-        playAudioSync(samples: audio.samples, sampleRate: Int(audio.sampleRate))
+        let wav = generateAudio(text: text, speed: speed)
+        guard !wav.isEmpty else { return }
+        playWavData(wav)
     }
 
     @objc public func stop() {
@@ -98,6 +102,7 @@ import Darwin
         audioPlayer?.stop()
         currentSemaphore?.signal()
         currentSemaphore = nil
+        diag("stop token=\(currentToken)")
     }
 
     @objc public func downloadFile(
@@ -121,9 +126,25 @@ import Darwin
     @objc public func generateAudio(text: String, speed: Float) -> Data {
         var result = Data()
         let myToken = self.currentToken
+
         generateQueue.sync {
-            guard let tts = self.tts else { return }
-            let preparedText = RussianPronunciationDictionary.shared.process(text)
+            guard let tts = self.tts else {
+                self.diag("generate ABORT engine-not-loaded")
+                return
+            }
+
+            // Text arriving here is already persisted pronunciation markup (tts_text).
+            // Do not run the RUAccent dictionary again during playback: doing so both
+            // wastes memory and can mutate an already resolved contextual homograph.
+            let chunks = SherpaTextChunker(maxChunkLength: kSherpaMaxChunkLength).split(text)
+            guard !chunks.isEmpty else {
+                self.diag("generate ABORT no-chunks chars=\(text.count)")
+                return
+            }
+
+            self.diag("generate START sourceChars=\(text.count) chunks=\(chunks.count) speed=\(speed)")
+            var allSamples: [Float] = []
+            var sampleRate: Int32?
 
             final class CallbackContext {
                 weak var owner: SherpaOnnxTtsBridge?
@@ -134,36 +155,63 @@ import Darwin
                 }
             }
 
-            let ctx = CallbackContext(self, myToken)
-            let rawCtx = Unmanaged.passRetained(ctx).toOpaque()
-            defer { Unmanaged<CallbackContext>.fromOpaque(rawCtx).release() }
+            for (chunkIndex, chunk) in chunks.enumerated() {
+                guard self.currentToken == myToken else {
+                    self.diag("generate CANCELLED before chunk=\(chunkIndex + 1)/\(chunks.count)")
+                    return
+                }
 
-            let audioResult = tts.generateWithCallbackWithArg(
-                text: preparedText,
-                callback: { _, _, rawArg -> Int32 in
-                    guard let rawArg else { return 0 }
-                    let ctx = Unmanaged<CallbackContext>.fromOpaque(rawArg).takeUnretainedValue()
-                    return ctx.owner?.currentToken == ctx.token ? 1 : 0
-                },
-                arg: rawCtx,
-                sid: 0,
-                speed: speed
-            )
+                let ctx = CallbackContext(self, myToken)
+                let rawCtx = Unmanaged.passRetained(ctx).toOpaque()
+                defer { Unmanaged<CallbackContext>.fromOpaque(rawCtx).release() }
 
-            guard self.currentToken == myToken else { return }
+                let audioResult = tts.generateWithCallbackWithArg(
+                    text: chunk,
+                    callback: { _, _, rawArg -> Int32 in
+                        guard let rawArg else { return 0 }
+                        let ctx = Unmanaged<CallbackContext>.fromOpaque(rawArg).takeUnretainedValue()
+                        return ctx.owner?.currentToken == ctx.token ? 1 : 0
+                    },
+                    arg: rawCtx,
+                    sid: 0,
+                    speed: speed
+                )
 
-            let samples = audioResult.samples
-            guard !samples.isEmpty else { return }
+                guard self.currentToken == myToken else {
+                    self.diag("generate CANCELLED chunk=\(chunkIndex + 1)/\(chunks.count)")
+                    return
+                }
 
-            var data = Data(capacity: samples.count * 2)
-            for sample in samples {
-                let clamped = max(-1.0, min(1.0, sample))
-                let intSample = Int16(clamped * Float(Int16.max))
-                withUnsafeBytes(of: intSample) { data.append(contentsOf: $0) }
+                let samples = audioResult.samples
+                guard !samples.isEmpty else {
+                    self.diag("generate ERROR empty chunk=\(chunkIndex + 1)/\(chunks.count) chars=\(chunk.count)")
+                    return
+                }
+
+                if let expected = sampleRate, expected != audioResult.sampleRate {
+                    self.diag("generate ERROR sample-rate changed \(expected)->\(audioResult.sampleRate)")
+                    return
+                }
+                sampleRate = audioResult.sampleRate
+                allSamples.append(contentsOf: samples)
+                self.diag("chunk=\(chunkIndex + 1)/\(chunks.count) chars=\(chunk.count) samples=\(samples.count)")
             }
-            var wav = self.makeWavHeader(dataSize: data.count, sampleRate: Int(audioResult.sampleRate))
-            wav.append(data)
+
+            guard self.currentToken == myToken,
+                  !allSamples.isEmpty,
+                  let finalRate = sampleRate else { return }
+
+            var pcm = Data(capacity: allSamples.count * 2)
+            for sample in allSamples {
+                let clamped = max(-1.0, min(1.0, sample))
+                var intSample = Int16(clamped * Float(Int16.max)).littleEndian
+                Swift.withUnsafeBytes(of: &intSample) { pcm.append(contentsOf: $0) }
+            }
+
+            var wav = self.makeWavHeader(dataSize: pcm.count, sampleRate: Int(finalRate))
+            wav.append(pcm)
             result = wav
+            self.diag("generate DONE chunks=\(chunks.count) samples=\(allSamples.count) bytes=\(wav.count)")
         }
         return result
     }
@@ -178,25 +226,16 @@ import Darwin
     }
 
     public func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
-        print("[SherpaOnnxBridge] decode error: \(error?.localizedDescription ?? "unknown")")
+        diag("decode error: \(error?.localizedDescription ?? "unknown")")
         currentSemaphore?.signal()
         currentSemaphore = nil
     }
 
-    private func playAudioSync(samples: [Float], sampleRate: Int) {
-        var data = Data(capacity: samples.count * 2)
-        for sample in samples {
-            let clamped = max(-1.0, min(1.0, sample))
-            let intSample = Int16(clamped * Float(Int16.max))
-            withUnsafeBytes(of: intSample) { data.append(contentsOf: $0) }
-        }
-        var wav = makeWavHeader(dataSize: data.count, sampleRate: sampleRate)
-        wav.append(data)
-        playWavData(wav)
-    }
-
     private func playWavData(_ data: Data) {
-        guard let player = try? AVAudioPlayer(data: data) else { return }
+        guard let player = try? AVAudioPlayer(data: data) else {
+            diag("play ABORT invalid WAV bytes=\(data.count)")
+            return
+        }
         audioPlayer = player
         player.delegate = self
         let sem = DispatchSemaphore(value: 0)
@@ -204,14 +243,6 @@ import Darwin
         player.play()
         sem.wait()
         currentSemaphore = nil
-    }
-
-    private func playPCM(data: Data, sampleRate: Int) {
-        // WAV header + data
-        var wav = makeWavHeader(dataSize: data.count, sampleRate: sampleRate)
-        wav.append(data)
-        audioPlayer = try? AVAudioPlayer(data: wav)
-        audioPlayer?.play()
     }
 
     private func makeWavHeader(dataSize: Int, sampleRate: Int) -> Data {
@@ -222,8 +253,8 @@ import Darwin
         header.append(contentsOf: "WAVE".utf8)
         header.append(contentsOf: "fmt ".utf8)
         header.append(littleEndian: UInt32(16))
-        header.append(littleEndian: UInt16(1))  // PCM
-        header.append(littleEndian: UInt16(1))  // mono
+        header.append(littleEndian: UInt16(1))
+        header.append(littleEndian: UInt16(1))
         header.append(littleEndian: UInt32(sampleRate))
         header.append(littleEndian: UInt32(sampleRate * 2))
         header.append(littleEndian: UInt16(2))
@@ -231,6 +262,101 @@ import Darwin
         header.append(contentsOf: "data".utf8)
         header.append(littleEndian: UInt32(dataSize))
         return header
+    }
+}
+
+/// Conservative sentence-aware chunker for Piper/sherpa-onnx. Keeping each call
+/// short prevents long VITS requests from silently truncating or destabilising on
+/// mobile, while preserving every source character in exactly one chunk.
+private struct SherpaTextChunker {
+    let maxChunkLength: Int
+
+    func split(_ text: String) -> [String] {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+        if trimmed.count <= maxChunkLength { return [trimmed] }
+
+        var chunks: [String] = []
+        var current = ""
+        let sentences = splitSentences(trimmed)
+
+        for sentence in sentences {
+            if sentence.count > maxChunkLength {
+                if !current.isEmpty {
+                    chunks.append(current)
+                    current = ""
+                }
+                chunks.append(contentsOf: splitLong(sentence))
+                continue
+            }
+
+            let candidate = current.isEmpty ? sentence : "\(current) \(sentence)"
+            if candidate.count <= maxChunkLength {
+                current = candidate
+            } else {
+                if !current.isEmpty { chunks.append(current) }
+                current = sentence
+            }
+        }
+        if !current.isEmpty { chunks.append(current) }
+        return chunks.filter { !$0.isEmpty }
+    }
+
+    private func splitSentences(_ text: String) -> [String] {
+        var result: [String] = []
+        var buffer = ""
+        let characters = Array(text)
+
+        for (index, character) in characters.enumerated() {
+            buffer.append(character)
+            guard character == "." || character == "!" || character == "?" || character == "…" else { continue }
+
+            let nextIndex = index + 1
+            if nextIndex < characters.count,
+               !characters[nextIndex].isWhitespace {
+                continue
+            }
+            let sentence = buffer.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !sentence.isEmpty { result.append(sentence) }
+            buffer.removeAll(keepingCapacity: true)
+        }
+
+        let tail = buffer.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !tail.isEmpty { result.append(tail) }
+        return result
+    }
+
+    private func splitLong(_ text: String) -> [String] {
+        let words = text.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        var result: [String] = []
+        var current = ""
+
+        for word in words {
+            if word.count > maxChunkLength {
+                if !current.isEmpty {
+                    result.append(current)
+                    current = ""
+                }
+                var remainder = word
+                while remainder.count > maxChunkLength {
+                    let cut = remainder.index(remainder.startIndex, offsetBy: maxChunkLength)
+                    result.append(String(remainder[..<cut]))
+                    remainder = String(remainder[cut...])
+                }
+                current = remainder
+                continue
+            }
+
+            let candidate = current.isEmpty ? word : "\(current) \(word)"
+            if candidate.count <= maxChunkLength {
+                current = candidate
+            } else {
+                if !current.isEmpty { result.append(current) }
+                current = word
+            }
+        }
+        if !current.isEmpty { result.append(current) }
+        return result
     }
 }
 
@@ -266,7 +392,7 @@ private class DownloadDelegate: NSObject, URLSessionDownloadDelegate {
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        if let error = error {
+        if let error {
             print("DownloadDelegate: error \(error)")
             onComplete(false)
         }
