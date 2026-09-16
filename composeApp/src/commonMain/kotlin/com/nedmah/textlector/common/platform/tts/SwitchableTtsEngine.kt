@@ -27,13 +27,6 @@ private fun log(message: String) {
     if (ENGINE_LOGS) println("[SwitchableTtsEngine] $message")
 }
 
-/**
- * Single entry point for TTS in the app.
- *
- * Piper and Supertonic share one language-aware pronunciation preprocessing
- * layer. The original paragraph remains untouched; only the text supplied to
- * neural generation gets number expansion and stress/homograph hints.
- */
 class SwitchableTtsEngine(
     private val nativeEngine: TtsEngine,
     private val sherpaEngine: SherpaOnnxTtsEngine,
@@ -47,24 +40,19 @@ class SwitchableTtsEngine(
     private val _isBuffering = MutableStateFlow(false)
     val isBuffering: Flow<Boolean> = _isBuffering.asStateFlow()
 
-    @Volatile
-    private var active: TtsEngine = nativeEngine
-
-    @Volatile
-    private var currentLanguage: String = "ru"
+    @Volatile private var active: TtsEngine = nativeEngine
+    @Volatile private var currentLanguage: String = "ru"
 
     private var currentVoiceKey: String? = null
+    private var currentEngineType: TtsEngineType = TtsEngineType.SYSTEM
     private var ttsQueue: TtsQueue? = null
     private var paragraphs: List<Paragraph> = emptyList()
-    private val neuralTextPreprocessor = NeuralTextPreprocessor()
-
+    private val fallbackPreprocessor = NeuralTextPreprocessor()
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     init {
         scope.launch(Dispatchers.IO) {
-            preferencesRepository.getPreferences().collect { prefs ->
-                handleEngineSwitch(prefs)
-            }
+            preferencesRepository.getPreferences().collect { prefs -> handleEngineSwitch(prefs) }
         }
     }
 
@@ -83,55 +71,49 @@ class SwitchableTtsEngine(
 
     override suspend fun speak(index: Int, speed: Float) {
         val queue = ttsQueue
-        log("speak: index=$index, speed=$speed, queue=${when {
-            queue != null && active === supertonicEngine -> "Supertonic"
-            queue != null -> "Piper"
-            else -> "Native"
-        }}, paragraphs=${paragraphs.size}")
+        log("speak: index=$index, speed=$speed, engine=$currentEngineType, paragraphs=${paragraphs.size}")
 
         if (queue != null) {
-            if (index >= paragraphs.size) {
-                log("speak: index out of bounds! index=$index, size=${paragraphs.size}")
-                return
-            }
-
+            if (index !in paragraphs.indices) return
             val cached = queue.getCachedAudio(index)
-            log("speak: cache ${if (cached != null) "HIT" else "MISS"} for index=$index")
             if (cached == null) _isBuffering.emit(true)
 
             val audio = try {
-                queue.getAudio(index, paragraphs[index].text, speed)
+                queue.getAudio(index, paragraphs[index], speed)
             } catch (e: Exception) {
-                log("speak: getAudio failed — ${e.message}")
                 withContext(NonCancellable) { _isBuffering.emit(false) }
                 throw e
             } finally {
                 withContext(NonCancellable) { _isBuffering.emit(false) }
             }
 
-            log("speak: audio ready, size=${audio.size}b, starting prefetch and playback")
             queue.prefetchAhead(index, paragraphs, speed)
             (active as SherpaOnnxTtsEngine).playAudio(audio)
-            log("speak: playAudio finished for index=$index")
         } else {
-            log("speak: native path for index=$index")
             nativeEngine.speak(index, speed)
-            log("speak: native finished for index=$index")
         }
     }
 
+    /** Used by the book background worker. Audio is generated but not played. */
+    suspend fun preGenerateParagraph(paragraph: Paragraph, speed: Float): Boolean {
+        val queue = ttsQueue ?: return false
+        return queue.preGenerate(paragraph, speed)
+    }
+
+    suspend fun isParagraphAudioReady(paragraph: Paragraph, speed: Float): Boolean {
+        val queue = ttsQueue ?: return false
+        return queue.isPersistentlyCached(paragraph, speed)
+    }
+
+    fun canPreGenerate(): Boolean = ttsQueue != null
+
     override fun stop() {
-        log("stop() called, active=${when (active) {
-            sherpaEngine -> "Piper"
-            supertonicEngine -> "Supertonic"
-            else -> "Native"
-        }}")
+        log("stop() active=$currentEngineType")
         ttsQueue?.clear()
         active.stop()
     }
 
     override fun shutdown() {
-        log("shutdown()")
         active.stop()
         scope.coroutineContext[Job]?.cancel()
         nativeEngine.shutdown()
@@ -139,21 +121,20 @@ class SwitchableTtsEngine(
         supertonicEngine.shutdown()
     }
 
-    private fun createNeuralQueue(engine: SherpaOnnxTtsEngine): TtsQueue =
-        TtsQueue(
+    private fun createNeuralQueue(engine: SherpaOnnxTtsEngine): TtsQueue {
+        val engineKey = if (engine === supertonicEngine) "supertonic" else "piper"
+        val namespace = "${engineKey}_${currentVoiceKey ?: "voice"}_${currentLanguage}"
+        return TtsQueue(
             engine = engine,
-            preprocess = { rawText ->
-                val prepared = neuralTextPreprocessor.process(rawText, currentLanguage)
-                if (prepared != rawText) {
-                    log("pronunciation preprocessor changed ${rawText.length} chars -> ${prepared.length} chars")
-                }
-                prepared
-            }
+            cacheNamespace = namespace,
+            preprocess = { rawText -> fallbackPreprocessor.process(rawText, currentLanguage) }
         )
+    }
 
     private suspend fun handleEngineSwitch(prefs: UserPreferences) {
         val previousLanguage = currentLanguage
         currentLanguage = prefs.language
+        currentEngineType = prefs.engineType
 
         val targetEngine = when (prefs.engineType) {
             TtsEngineType.SYSTEM -> nativeEngine
@@ -166,33 +147,31 @@ class SwitchableTtsEngine(
         val languageChanged = previousLanguage != currentLanguage
         val voiceChanged = currentVoiceKey != voiceKey
 
-        // Same engine, but language/voice changes must invalidate prefetched audio.
         if (active === targetEngine) {
             if (targetEngine is SherpaOnnxTtsEngine) {
-                if (voiceChanged) {
-                    targetEngine.loadVoice(VoiceRegistry.getById(resolvedVoice))
-                }
+                if (voiceChanged) targetEngine.loadVoice(VoiceRegistry.getById(resolvedVoice))
                 if (ttsQueue == null || languageChanged || voiceChanged) {
+                    currentVoiceKey = voiceKey
                     ttsQueue?.shutdown()
                     ttsQueue = createNeuralQueue(targetEngine)
+                } else {
+                    currentVoiceKey = voiceKey
                 }
-                currentVoiceKey = voiceKey
             } else {
                 currentVoiceKey = null
             }
             return
         }
 
-        log("switching to ${prefs.engineType}...")
         active.stop()
         active = targetEngine
 
         if (targetEngine is SherpaOnnxTtsEngine) {
             val model = VoiceRegistry.getById(resolvedVoice)
             targetEngine.loadVoice(model)
+            currentVoiceKey = voiceKey
             ttsQueue?.shutdown()
             ttsQueue = createNeuralQueue(targetEngine)
-            currentVoiceKey = voiceKey
         } else {
             ttsQueue?.shutdown()
             ttsQueue = null
