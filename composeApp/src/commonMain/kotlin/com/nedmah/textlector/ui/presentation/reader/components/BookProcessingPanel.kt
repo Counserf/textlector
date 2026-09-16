@@ -19,7 +19,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
@@ -62,6 +61,14 @@ fun BookProcessingPanel(
                 running = state.audioRunning,
             )
 
+            if (state.audioWaitingForMarkup) {
+                Text(
+                    "Генерация поставлена в очередь и начнётся после завершения разметки.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+
             if (!state.audioComplete && !state.audioRunning) {
                 Button(onClick = onStartAudioGeneration, modifier = Modifier.fillMaxWidth()) {
                     Text(if (state.audioDone > 0) "Продолжить генерацию озвучки" else "Сгенерировать озвучку")
@@ -73,9 +80,7 @@ fun BookProcessingPanel(
             }
 
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                TextButton(onClick = {
-                    copied = TtsDiagnosticLog.copyToClipboard()
-                }) {
+                TextButton(onClick = { copied = TtsDiagnosticLog.copyToClipboard() }) {
                     Text(if (copied) "Лог скопирован" else "Скопировать TTS-лог")
                 }
                 TextButton(onClick = {
