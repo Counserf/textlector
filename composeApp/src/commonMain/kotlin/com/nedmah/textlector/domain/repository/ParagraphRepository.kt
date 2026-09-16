@@ -7,6 +7,7 @@ interface ParagraphRepository {
 
     fun getParagraphsByDocumentId(documentId: String): Flow<List<Paragraph>>
     suspend fun saveParagraphs(paragraphs: List<Paragraph>): Result<Unit>
+    suspend fun updateTtsText(paragraphId: String, ttsText: String): Result<Unit>
     suspend fun deleteParagraphsByDocumentId(documentId: String): Result<Unit>
 
 }
