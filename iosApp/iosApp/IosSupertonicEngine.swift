@@ -335,12 +335,12 @@ final class RussianPronunciationDictionary {
     private let wordRegex: NSRegularExpression
 
     private init() {
-        accents = RuAccentPack(resource: "accents_nn")
+        accents = RuAccentPack(resource: "accents_full")
         yoWords = RuAccentPack(resource: "yo_words")
         homographs = RuAccentPack(resource: "omographs")
         yoHomographs = RuAccentPack(resource: "yo_homographs")
         wordRegex = try! NSRegularExpression(pattern: "[А-Яа-яЁё\\u{0301}]+")
-        print("[RussianPronunciationDictionary] mmap packs ready")
+        print("[RussianPronunciationDictionary] full mmap packs ready")
     }
 
     func process(_ text: String) -> String {
