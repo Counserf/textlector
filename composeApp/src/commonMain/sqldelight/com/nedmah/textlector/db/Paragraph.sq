@@ -14,6 +14,23 @@ SELECT * FROM paragraph
 WHERE document_id = :documentId
 ORDER BY index_in_doc ASC;
 
+selectByDocumentIdAndIndex:
+SELECT * FROM paragraph
+WHERE document_id = :documentId
+  AND index_in_doc = :indexInDoc
+LIMIT 1;
+
+selectIndicesByDocumentId:
+SELECT index_in_doc FROM paragraph
+WHERE document_id = :documentId
+ORDER BY index_in_doc ASC;
+
+selectPreparedIndicesByDocumentId:
+SELECT index_in_doc FROM paragraph
+WHERE document_id = :documentId
+  AND tts_text IS NOT NULL
+ORDER BY index_in_doc ASC;
+
 insertParagraph:
 INSERT INTO paragraph(id, document_id, index_in_doc, text, tts_text)
 VALUES (?, ?, ?, ?, ?);
