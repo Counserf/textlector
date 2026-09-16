@@ -12,7 +12,13 @@ class NeuralTextPreprocessor {
     fun process(text: String, language: String): String {
         if (!language.lowercase().startsWith("ru")) return text
 
-        val normalizedNumbers = RussianNumberNormalizer.normalize(text)
-        return RussianPronunciationRules.apply(normalizedNumbers)
+        // Some notation needs its surrounding context while it is still numeric
+        // (clock time and calendar years). The generic normalizer then expands
+        // the remaining integers/cases, after which we can repair grammatical
+        // gender using the following noun.
+        val contextualNumbers = RussianContextNumberNormalizer.normalizeRaw(text)
+        val normalizedNumbers = RussianNumberNormalizer.normalize(contextualNumbers)
+        val agreedNumbers = RussianContextNumberNormalizer.repairAgreement(normalizedNumbers)
+        return RussianPronunciationRules.apply(agreedNumbers)
     }
 }

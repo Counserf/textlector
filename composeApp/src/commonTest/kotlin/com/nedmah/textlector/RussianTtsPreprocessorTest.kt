@@ -38,6 +38,50 @@ class RussianTtsPreprocessorTest {
     }
 
     @Test
+    fun agreesNumbersWithFeminineAndNeuterNouns() {
+        assertEquals(
+            "Прочитана одна страница и две страницы.",
+            preprocessor.process("Прочитана 1 страница и 2 страницы.", "ru")
+        )
+        assertEquals(
+            "К двадцати одной странице добавили одну задачу.",
+            preprocessor.process("К 21 странице добавили 1 задачу.", "ru")
+        )
+        assertEquals(
+            "Около одной минуты и с двадцатью одной секундой.",
+            preprocessor.process("Около 1 минуты и с 21 секундой.", "ru")
+        )
+        assertEquals(
+            "Открыто одно окно.",
+            preprocessor.process("Открыто 1 окно.", "ru")
+        )
+    }
+
+    @Test
+    fun expandsClockTimeAndBareYears() {
+        assertEquals(
+            "Начало в тринадцать часов одна минута.",
+            preprocessor.process("Начало в 13:01.", "ru")
+        )
+        assertEquals(
+            "две тысячи двадцать четвёртый год завершён.",
+            preprocessor.process("2024 год завершён.", "ru")
+        )
+        assertEquals(
+            "События две тысячи двадцать четвёртого года.",
+            preprocessor.process("События 2024 года.", "ru")
+        )
+        assertEquals(
+            "Подготовились к две тысячи двадцать четвёртому году.",
+            preprocessor.process("Подготовились к 2024 году.", "ru")
+        )
+        assertEquals(
+            "Встреча в девять часов две минуты.",
+            preprocessor.process("Встреча в 09:02.", "ru")
+        )
+    }
+
+    @Test
     fun resolvesHomographsOnlyWhenContextIsUseful() {
         val lock = preprocessor.process("Он открыл замок ключом.", "ru")
         val castle = preprocessor.process("Старинный замок возвышался над городом.", "ru")
