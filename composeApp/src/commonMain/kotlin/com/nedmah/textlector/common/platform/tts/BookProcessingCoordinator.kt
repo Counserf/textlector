@@ -10,6 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -22,6 +23,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.yield
 
 data class BookProcessingState(
     val documentId: String = "",
@@ -53,11 +55,26 @@ class BookProcessingCoordinator(
     val states: StateFlow<Map<String, BookProcessingState>> = _states.asStateFlow()
 
     private val markupJobs = mutableMapOf<String, Job>()
+    private val scheduledMarkupJobs = mutableMapOf<String, Job>()
     private val audioJobs = mutableMapOf<String, Job>()
 
     fun stateFor(documentId: String): Flow<BookProcessingState> =
         states.map { it[documentId] ?: BookProcessingState(documentId = documentId) }
             .distinctUntilChanged()
+
+    /**
+     * Schedule heavy pronunciation work after import has fully returned and its
+     * temporary parser/ProcessedDocument allocations can be released by iOS.
+     */
+    fun scheduleMarkup(documentId: String, delayMillis: Long = 2_000L) {
+        if (markupJobs[documentId]?.isActive == true || scheduledMarkupJobs[documentId]?.isActive == true) return
+        scheduledMarkupJobs[documentId] = scope.launch {
+            TtsDiagnosticLog.append("Markup", "scheduled document=$documentId delayMs=$delayMillis")
+            delay(delayMillis)
+            scheduledMarkupJobs.remove(documentId)
+            startMarkup(documentId)
+        }
+    }
 
     /**
      * Returns only a paragraph that has already passed the pronunciation pipeline.
@@ -89,45 +106,54 @@ class BookProcessingCoordinator(
 
     fun startMarkup(documentId: String) {
         if (markupJobs[documentId]?.isActive == true) return
+        scheduledMarkupJobs.remove(documentId)?.cancel()
+
         markupJobs[documentId] = scope.launch {
             markerMutex.withLock {
-                TtsDiagnosticLog.append("Markup", "start document=$documentId")
+                TtsDiagnosticLog.append("Markup", "start document=$documentId lowMemory=true")
                 try {
                     val language = preferencesRepository.getPreferences().first().language
-                    val paragraphs = paragraphRepository.getParagraphsByDocumentId(documentId).first()
-                    val ready = paragraphs.filter { it.ttsText != null }.map { it.index }.toMutableSet()
+                    val indices = paragraphRepository.getParagraphIndices(documentId)
+                    val ready = paragraphRepository.getPreparedParagraphIndices(documentId).toMutableSet()
                     update(documentId) {
                         it.copy(
-                            totalParagraphs = paragraphs.size,
+                            totalParagraphs = indices.size,
                             markupDone = ready.size,
                             markupReadyIndices = ready.toSet(),
-                            markupRunning = ready.size < paragraphs.size,
+                            markupRunning = ready.size < indices.size,
                             error = null
                         )
                     }
 
-                    for (paragraph in paragraphs) {
-                        if (paragraph.index in ready) continue
-                        update(documentId) { it.copy(markupCurrentIndex = paragraph.index, markupRunning = true) }
-                        TtsDiagnosticLog.append("Markup", "paragraph=${paragraph.index} chars=${paragraph.text.length} start")
+                    // Keep only integer indices for the book. Each paragraph text is
+                    // loaded from SQLite just before processing and becomes eligible
+                    // for release immediately after its ttsText is persisted.
+                    for (index in indices) {
+                        if (index in ready) continue
+                        val paragraph = paragraphRepository.getParagraphByIndex(documentId, index)
+                            ?: error("Отрывок ${index + 1} не найден в БД")
+
+                        update(documentId) { it.copy(markupCurrentIndex = index, markupRunning = true) }
+                        TtsDiagnosticLog.append("Markup", "paragraph=$index chars=${paragraph.text.length} start")
                         val prepared = marker.prepare(paragraph.text, language)
                         paragraphRepository.updateTtsText(paragraph.id, prepared).getOrThrow()
-                        ready += paragraph.index
-                        TtsDiagnosticLog.append("Markup", "paragraph=${paragraph.index} ready chars=${prepared.length}")
+                        ready += index
+                        TtsDiagnosticLog.append("Markup", "paragraph=$index ready chars=${prepared.length}")
                         update(documentId) {
                             it.copy(markupDone = ready.size, markupReadyIndices = ready.toSet())
                         }
+                        yield()
                     }
 
                     update(documentId) {
                         it.copy(
-                            markupDone = paragraphs.size,
-                            markupReadyIndices = paragraphs.map { p -> p.index }.toSet(),
+                            markupDone = indices.size,
+                            markupReadyIndices = indices.toSet(),
                             markupCurrentIndex = null,
                             markupRunning = false
                         )
                     }
-                    TtsDiagnosticLog.append("Markup", "complete document=$documentId total=${paragraphs.size}")
+                    TtsDiagnosticLog.append("Markup", "complete document=$documentId total=${indices.size}")
                 } catch (e: Exception) {
                     TtsDiagnosticLog.append("Markup", "error document=$documentId message=${e.message}")
                     update(documentId) {
