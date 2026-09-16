@@ -21,6 +21,7 @@ import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 
 private const val TTS_QUEUE_LOGS = true
+private const val AUDIO_CACHE_PIPELINE_VERSION = 3
 
 private fun ttsLog(message: String) {
     if (TTS_QUEUE_LOGS) println("[TtsQueue ${Clock.System.now().toEpochMilliseconds() % 100_000}ms] $message")
@@ -31,7 +32,6 @@ class TtsQueue(
     val engine: SherpaOnnxTtsEngine,
     val bufferSize: Int = 1,
     private val cacheNamespace: String,
-    private val preprocess: suspend (String) -> String = { it },
     private val audioCache: TtsAudioCache = TtsAudioCache(),
 ) {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -53,7 +53,16 @@ class TtsQueue(
             for (i in from until until) {
                 if (generationId.load() != capturedGeneration) break
                 val paragraph = paragraphs[i]
-                val disk = audioCache.load(cacheKey(paragraph, speed))
+                val preparedText = paragraph.ttsText
+                if (preparedText == null) {
+                    // Markup runs independently and will update the playlist via DB flow.
+                    // Never synthesize raw text here: that would persist a bad WAV.
+                    ttsLog("paragraph[$i]: prefetch skipped, pronunciation markup not ready")
+                    break
+                }
+
+                val key = cacheKey(paragraph, preparedText, speed)
+                val disk = audioCache.load(key)
                 if (disk != null) {
                     ttsLog("paragraph[$i]: CACHE FILE HIT, size=${disk.size}b")
                     continue
@@ -65,8 +74,7 @@ class TtsQueue(
                 val startMs = Clock.System.now().toEpochMilliseconds()
                 try {
                     val audio = generationMutex.withLock {
-                        val preparedText = paragraph.ttsText ?: preprocess(paragraph.text)
-                        ttsLog("paragraph[$i]: generate start, prepared=${paragraph.ttsText != null}, chars=${preparedText.length}")
+                        ttsLog("paragraph[$i]: generate start, prepared=true, chars=${preparedText.length}")
                         engine.generate(preparedText, speed)
                     }
                     if (audio.isEmpty()) {
@@ -74,7 +82,7 @@ class TtsQueue(
                         ttsLog("paragraph[$i]: empty audio")
                         break
                     }
-                    audioCache.save(cacheKey(paragraph, speed), audio)
+                    audioCache.save(key, audio)
                     val elapsed = Clock.System.now().toEpochMilliseconds() - startMs
                     if (generationId.load() == capturedGeneration) {
                         deferred.complete(audio)
@@ -96,7 +104,8 @@ class TtsQueue(
     }
 
     suspend fun getAudio(index: Int, paragraph: Paragraph, speed: Float): ByteArray {
-        val key = cacheKey(paragraph, speed)
+        val preparedText = requirePreparedText(paragraph)
+        val key = cacheKey(paragraph, preparedText, speed)
         audioCache.load(key)?.let {
             ttsLog("getAudio($index): CACHE FILE HIT, size=${it.size}b")
             return it
@@ -108,8 +117,7 @@ class TtsQueue(
             val capturedGeneration = generationId.load()
             try {
                 val audio = generationMutex.withLock {
-                    val preparedText = paragraph.ttsText ?: preprocess(paragraph.text)
-                    ttsLog("getAudio($index): generate start, prepared=${paragraph.ttsText != null}, chars=${preparedText.length}")
+                    ttsLog("getAudio($index): generate start, prepared=true, chars=${preparedText.length}")
                     engine.generate(preparedText, speed)
                 }
                 if (audio.isEmpty()) {
@@ -145,13 +153,13 @@ class TtsQueue(
     }
 
     suspend fun preGenerate(paragraph: Paragraph, speed: Float): Boolean {
-        val key = cacheKey(paragraph, speed)
+        val preparedText = requirePreparedText(paragraph)
+        val key = cacheKey(paragraph, preparedText, speed)
         if (audioCache.exists(key)) {
             ttsLog("preGenerate(${paragraph.index}): CACHE FILE HIT")
             return true
         }
-        val preparedText = paragraph.ttsText ?: preprocess(paragraph.text)
-        ttsLog("preGenerate(${paragraph.index}): start, prepared=${paragraph.ttsText != null}, chars=${preparedText.length}")
+        ttsLog("preGenerate(${paragraph.index}): start, prepared=true, chars=${preparedText.length}")
         val audio = generationMutex.withLock { engine.generate(preparedText, speed) }
         if (audio.isEmpty()) {
             ttsLog("preGenerate(${paragraph.index}): empty audio")
@@ -162,8 +170,10 @@ class TtsQueue(
         return true
     }
 
-    suspend fun isPersistentlyCached(paragraph: Paragraph, speed: Float): Boolean =
-        audioCache.exists(cacheKey(paragraph, speed))
+    suspend fun isPersistentlyCached(paragraph: Paragraph, speed: Float): Boolean {
+        val preparedText = paragraph.ttsText ?: return false
+        return audioCache.exists(cacheKey(paragraph, preparedText, speed))
+    }
 
     @OptIn(ExperimentalCoroutinesApi::class)
     fun getCachedAudio(index: Int): ByteArray? {
@@ -196,8 +206,21 @@ class TtsQueue(
         clear()
     }
 
-    private fun cacheKey(paragraph: Paragraph, speed: Float): String =
-        "${paragraph.documentId}_${paragraph.id}_${cacheNamespace}_s${(speed * 1000f).toInt()}_v2"
+    private fun requirePreparedText(paragraph: Paragraph): String =
+        paragraph.ttsText ?: error(
+            "Отрывок ${paragraph.index + 1} ещё не прошёл разметку произношения"
+        )
+
+    private fun cacheKey(paragraph: Paragraph, preparedText: String, speed: Float): String =
+        "${paragraph.documentId}_${paragraph.id}_${cacheNamespace}_s${(speed * 1000f).toInt()}" +
+            "_t${stableTextHash(preparedText)}_v$AUDIO_CACHE_PIPELINE_VERSION"
+
+    /** Deterministic cross-platform hash used only for persistent cache invalidation. */
+    private fun stableTextHash(text: String): String {
+        var hash = 0
+        for (ch in text) hash = 31 * hash + ch.code
+        return hash.toString()
+    }
 
     private suspend fun acquireSlot(index: Int): Pair<CompletableDeferred<ByteArray>, Boolean> =
         mutex.withLock {
