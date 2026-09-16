@@ -273,16 +273,18 @@ class ImportViewModel(
 
     private fun confirmImport() {
         val processed = _state.value.processedDocument ?: return
+        val documentId = processed.document.id
         viewModelScope.launch {
             _state.update { it.copy(isLoading = true, error = null) }
             saveDocumentUseCase(processed.document, processed.paragraphs)
                 .onSuccess {
-                    // App-level worker survives this ViewModel and starts immediately
-                    // after the book reaches persistent storage. Import/navigation is
-                    // not blocked by pronunciation work.
-                    bookProcessingCoordinator.startMarkup(processed.document.id)
+                    // Release the large import preview from UI state first. The
+                    // app-level worker starts after a short grace period, once this
+                    // coroutine/parser allocations have returned and iOS can reclaim
+                    // them. This prevents an import + RUAccent memory spike.
                     _state.update { it.copy(processedDocument = null, isLoading = false) }
-                    _effect.send(ImportEffect.NavigateToReader(processed.document.id))
+                    _effect.send(ImportEffect.NavigateToReader(documentId))
+                    bookProcessingCoordinator.scheduleMarkup(documentId)
                 }
                 .onFailure { error ->
                     val message = error.message ?: "Save failed"
