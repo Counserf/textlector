@@ -29,10 +29,12 @@ actual class TtsAudioCache actual constructor() {
         runCatching { fs.read(path) { readByteArray() } }.getOrNull()
     }
 
-    actual suspend fun save(key: String, audio: ByteArray) = withContext(Dispatchers.IO) {
-        if (audio.isEmpty()) return@withContext
-        fs.createDirectories(root)
-        fs.write(root / safeName(key)) { write(audio) }
+    actual suspend fun save(key: String, audio: ByteArray): Unit = withContext(Dispatchers.IO) {
+        if (audio.isNotEmpty()) {
+            fs.createDirectories(root)
+            fs.write(root / safeName(key)) { write(audio) }
+        }
+        Unit
     }
 
     actual suspend fun exists(key: String): Boolean = withContext(Dispatchers.IO) {
