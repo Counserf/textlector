@@ -2,6 +2,7 @@
 
 package com.nedmah.textlector.common.platform.tts
 
+import com.nedmah.textlector.common.platform.logging.TtsDiagnosticLog
 import com.nedmah.textlector.domain.model.Paragraph
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -23,6 +24,7 @@ private const val TTS_QUEUE_LOGS = true
 
 private fun ttsLog(message: String) {
     if (TTS_QUEUE_LOGS) println("[TtsQueue ${Clock.System.now().toEpochMilliseconds() % 100_000}ms] $message")
+    TtsDiagnosticLog.append("TtsQueue", message)
 }
 
 class TtsQueue(
@@ -53,7 +55,7 @@ class TtsQueue(
                 val paragraph = paragraphs[i]
                 val disk = audioCache.load(cacheKey(paragraph, speed))
                 if (disk != null) {
-                    ttsLog("  paragraph[$i]: CACHE FILE HIT, size=${disk.size}b")
+                    ttsLog("paragraph[$i]: CACHE FILE HIT, size=${disk.size}b")
                     continue
                 }
 
@@ -64,27 +66,30 @@ class TtsQueue(
                 try {
                     val audio = generationMutex.withLock {
                         val preparedText = paragraph.ttsText ?: preprocess(paragraph.text)
+                        ttsLog("paragraph[$i]: generate start, prepared=${paragraph.ttsText != null}, chars=${preparedText.length}")
                         engine.generate(preparedText, speed)
                     }
                     if (audio.isEmpty()) {
                         deferred.cancel()
+                        ttsLog("paragraph[$i]: empty audio")
                         break
                     }
                     audioCache.save(cacheKey(paragraph, speed), audio)
                     val elapsed = Clock.System.now().toEpochMilliseconds() - startMs
                     if (generationId.load() == capturedGeneration) {
                         deferred.complete(audio)
-                        ttsLog("  paragraph[$i]: ready in ${elapsed}ms, saved=${audio.size}b")
+                        ttsLog("paragraph[$i]: ready in ${elapsed}ms, saved=${audio.size}b")
                     } else {
                         deferred.cancel()
                         break
                     }
                 } catch (e: CancellationException) {
                     deferred.cancel()
+                    ttsLog("paragraph[$i]: cancelled")
                     break
                 } catch (e: Exception) {
                     deferred.completeExceptionally(e)
-                    ttsLog("  paragraph[$i]: error — ${e.message}")
+                    ttsLog("paragraph[$i]: error=${e.message}")
                 }
             }
         }
@@ -99,11 +104,12 @@ class TtsQueue(
 
         val (deferred, shouldGenerate) = acquireSlot(index)
         if (shouldGenerate) {
-            ttsLog("getAudio($index): CACHE MISS — generating")
+            ttsLog("getAudio($index): CACHE MISS")
             val capturedGeneration = generationId.load()
             try {
                 val audio = generationMutex.withLock {
                     val preparedText = paragraph.ttsText ?: preprocess(paragraph.text)
+                    ttsLog("getAudio($index): generate start, prepared=${paragraph.ttsText != null}, chars=${preparedText.length}")
                     engine.generate(preparedText, speed)
                 }
                 if (audio.isEmpty()) {
@@ -117,30 +123,42 @@ class TtsQueue(
                 audioCache.save(key, audio)
                 deferred.complete(audio)
                 mutex.withLock { pending.remove(index) }
+                ttsLog("getAudio($index): generated and saved ${audio.size}b")
                 return audio
             } catch (e: Exception) {
                 if (!deferred.isCompleted) deferred.completeExceptionally(e)
+                ttsLog("getAudio($index): error=${e.message}")
                 throw e
             }
         }
 
         return try {
+            ttsLog("getAudio($index): waiting existing generation")
             val audio = deferred.await()
             mutex.withLock { pending.remove(index) }
             audio
         } catch (e: Exception) {
             mutex.withLock { pending.remove(index) }
+            ttsLog("getAudio($index): wait error=${e.message}")
             throw e
         }
     }
 
     suspend fun preGenerate(paragraph: Paragraph, speed: Float): Boolean {
         val key = cacheKey(paragraph, speed)
-        if (audioCache.exists(key)) return true
+        if (audioCache.exists(key)) {
+            ttsLog("preGenerate(${paragraph.index}): CACHE FILE HIT")
+            return true
+        }
         val preparedText = paragraph.ttsText ?: preprocess(paragraph.text)
+        ttsLog("preGenerate(${paragraph.index}): start, prepared=${paragraph.ttsText != null}, chars=${preparedText.length}")
         val audio = generationMutex.withLock { engine.generate(preparedText, speed) }
-        if (audio.isEmpty()) return false
+        if (audio.isEmpty()) {
+            ttsLog("preGenerate(${paragraph.index}): empty audio")
+            return false
+        }
         audioCache.save(key, audio)
+        ttsLog("preGenerate(${paragraph.index}): saved ${audio.size}b")
         return true
     }
 
@@ -156,6 +174,7 @@ class TtsQueue(
 
     fun clear() {
         generationId.addAndFetch(1)
+        ttsLog("clear()")
         scope.launch {
             mutex.withLock {
                 pending.values.forEach { it.cancel() }
