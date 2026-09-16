@@ -50,8 +50,12 @@ import ComposeApp
     func speak(index: Int32, speed: Float) async throws {
         guard index >= 0, Int(index) < paragraphs.count else { return }
         let paragraph = paragraphs[Int(index)]
-        diag("speak START index=\(index) prepared=\(paragraph.ttsText != nil)")
-        let audio = try await generate(text: paragraph.ttsText ?? paragraph.text, speed: speed)
+        guard let prepared = paragraph.ttsText else {
+            diag("speak ABORT index=\(index) pronunciation markup not ready")
+            throw makeError("Отрывок \(index + 1) ещё не прошёл разметку произношения.")
+        }
+        diag("speak START index=\(index) prepared=true")
+        let audio = try await generate(text: prepared, speed: speed)
         try await playAudio(audio: audio)
         diag("speak END index=\(index)")
     }
@@ -136,8 +140,28 @@ import ComposeApp
     }
 }
 
+/// Deterministic RUAccent dictionaries for ordinary stress and ё. The singleton
+/// is explicitly releasable so several large Swift dictionaries do not remain in
+/// memory when background markup hands control over to Piper/Supertonic.
 final class RussianPronunciationDictionary {
-    static let shared = RussianPronunciationDictionary()
+    private static let instanceLock = NSLock()
+    private static var instance: RussianPronunciationDictionary?
+
+    static var shared: RussianPronunciationDictionary {
+        instanceLock.lock()
+        defer { instanceLock.unlock() }
+        if let instance { return instance }
+        let created = RussianPronunciationDictionary()
+        instance = created
+        return created
+    }
+
+    static func releaseShared() {
+        instanceLock.lock()
+        instance = nil
+        instanceLock.unlock()
+        print("[RussianPronunciationDictionary] resources released")
+    }
 
     private let accents: [String: String]
     private let yoWords: [String: String]
@@ -170,6 +194,8 @@ final class RussianPronunciationDictionary {
             let lower = original.lowercased()
             var candidate = original
 
+            // Context-dependent ё forms are intentionally not guessed by a static
+            // dictionary. Safe, non-homographic ё replacements are still applied.
             if !yoHomographs.contains(lower), let yo = yoWords[lower] {
                 candidate = Self.preserveCase(source: original, replacement: yo)
             }
