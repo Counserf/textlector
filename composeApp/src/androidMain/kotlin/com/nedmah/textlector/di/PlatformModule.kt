@@ -10,6 +10,8 @@ import com.nedmah.textlector.common.platform.ocr.OcrEngine
 import com.nedmah.textlector.common.platform.tts.AndroidSherpaOnnxTtsEngine
 import com.nedmah.textlector.common.platform.tts.AndroidSupertonicTtsEngine
 import com.nedmah.textlector.common.platform.tts.AndroidTtsEngine
+import com.nedmah.textlector.common.platform.tts.NoopRemotePlaybackController
+import com.nedmah.textlector.common.platform.tts.RemotePlaybackController
 import com.nedmah.textlector.common.platform.tts.SwitchableTtsEngine
 import com.nedmah.textlector.common.platform.tts.TtsEngine
 import com.nedmah.textlector.data.db.DatabaseDriverFactory
@@ -34,8 +36,8 @@ actual val platformModule = module {
 
     single { FileReader(androidContext()) }
     single<OcrEngine> { AndroidOcrEngine(get(), get(), get()) }
+    single<RemotePlaybackController> { NoopRemotePlaybackController }
 
-    // Supertonic
     single {
         SupertonicTts(
             SupertonicConfig(
@@ -47,12 +49,10 @@ actual val platformModule = module {
         )
     }
 
-    // repository
     single<OcrDataRepository> { AndroidOcrDataRepository(get()) }
     single<VoiceModelRepository> { AndroidVoiceModelRepositoryImpl(androidContext()) }
     single<SupertonicRepository> { AndroidSupertonicRepositoryImpl(get()) }
 
-    // TTS engines
     single { AndroidTtsEngine(androidContext()) }
     single { AndroidSherpaOnnxTtsEngine(get()) }
     single { AndroidSupertonicTtsEngine(get<SupertonicTts>()) }
@@ -64,5 +64,4 @@ actual val platformModule = module {
             preferencesRepository = get()
         )
     }
-
 }
