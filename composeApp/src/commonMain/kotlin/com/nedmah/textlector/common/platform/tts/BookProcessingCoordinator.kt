@@ -2,6 +2,7 @@ package com.nedmah.textlector.common.platform.tts
 
 import com.nedmah.textlector.common.platform.logging.TtsDiagnosticLog
 import com.nedmah.textlector.common.platform.tts.text.PronunciationMarker
+import com.nedmah.textlector.domain.model.Paragraph
 import com.nedmah.textlector.domain.repository.ParagraphRepository
 import com.nedmah.textlector.domain.repository.PreferencesRepository
 import kotlinx.coroutines.CoroutineScope
@@ -13,6 +14,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -56,6 +58,34 @@ class BookProcessingCoordinator(
     fun stateFor(documentId: String): Flow<BookProcessingState> =
         states.map { it[documentId] ?: BookProcessingState(documentId = documentId) }
             .distinctUntilChanged()
+
+    /**
+     * Returns only a paragraph that has already passed the pronunciation pipeline.
+     * Neural playback uses this instead of falling back to raw text, so an early
+     * Play can never create a persistent WAV with missing RUAccent/number markup.
+     */
+    suspend fun awaitPreparedParagraph(documentId: String, index: Int): Paragraph {
+        startMarkup(documentId)
+        TtsDiagnosticLog.append("Markup", "await paragraph=$index document=$documentId")
+
+        val (paragraphs, state) = combine(
+            paragraphRepository.getParagraphsByDocumentId(documentId),
+            stateFor(documentId)
+        ) { currentParagraphs, currentState -> currentParagraphs to currentState }
+            .first { (currentParagraphs, currentState) ->
+                currentParagraphs.getOrNull(index)?.ttsText != null ||
+                    (!currentState.markupRunning && currentState.error != null)
+            }
+
+        val paragraph = paragraphs.getOrNull(index)
+            ?: error("Отрывок ${index + 1} не найден")
+        if (paragraph.ttsText == null) {
+            error(state.error ?: "Не удалось подготовить отрывок ${index + 1} для озвучки")
+        }
+
+        TtsDiagnosticLog.append("Markup", "await ready paragraph=$index document=$documentId")
+        return paragraph
+    }
 
     fun startMarkup(documentId: String) {
         if (markupJobs[documentId]?.isActive == true) return
@@ -130,9 +160,9 @@ class BookProcessingCoordinator(
                 }
                 TtsDiagnosticLog.append("AudioJob", "queued document=$documentId total=${initial.size}")
 
-                // Never keep RUAccent and the neural TTS model doing heavy work at the
-                // same time. A user can press Generate immediately; the request stays
-                // queued until the background markup job has finished.
+                // Do not keep RUAccent and the neural TTS model doing heavy work at
+                // the same time. Generate can be requested immediately after import;
+                // it stays queued until all persisted pronunciation markup is ready.
                 markupJobs[documentId]?.join()
                 val paragraphs = paragraphRepository.getParagraphsByDocumentId(documentId).first()
                 if (paragraphs.any { it.ttsText == null }) {
