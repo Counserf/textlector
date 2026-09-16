@@ -9,4 +9,8 @@ actual class PronunciationMarker actual constructor() {
         val normalized = common.process(text, language)
         return IosEngineHolder.pronunciationEnhancer?.enhance(normalized, language) ?: normalized
     }
+
+    actual fun releaseResources() {
+        IosEngineHolder.pronunciationEnhancer?.releaseResources()
+    }
 }
