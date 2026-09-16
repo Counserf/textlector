@@ -88,7 +88,8 @@ import Darwin
 
     @objc public func speak(text: String, speed: Float) {
         guard let tts = tts else { return }
-        let audio = tts.generate(text: text, sid: 0, speed: speed)
+        let preparedText = RussianPronunciationDictionary.shared.process(text)
+        let audio = tts.generate(text: preparedText, sid: 0, speed: speed)
         playAudioSync(samples: audio.samples, sampleRate: Int(audio.sampleRate))
     }
 
@@ -122,6 +123,7 @@ import Darwin
         let myToken = self.currentToken
         generateQueue.sync {
             guard let tts = self.tts else { return }
+            let preparedText = RussianPronunciationDictionary.shared.process(text)
 
             final class CallbackContext {
                 weak var owner: SherpaOnnxTtsBridge?
@@ -137,7 +139,7 @@ import Darwin
             defer { Unmanaged<CallbackContext>.fromOpaque(rawCtx).release() }
 
             let audioResult = tts.generateWithCallbackWithArg(
-                text: text,
+                text: preparedText,
                 callback: { _, _, rawArg -> Int32 in
                     guard let rawArg else { return 0 }
                     let ctx = Unmanaged<CallbackContext>.fromOpaque(rawArg).takeUnretainedValue()
@@ -255,10 +257,8 @@ private class DownloadDelegate: NSObject, URLSessionDownloadDelegate {
         }
     }
 
-    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
-                    didWriteData bytesWritten: Int64,
-                    totalBytesWritten: Int64,
-                    totalBytesExpectedToWrite: Int64) {
+    func urlSession(_ session: URLSessionDownloadTask, didWriteData bytesWritten: Int64,
+                    totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
         guard totalBytesExpectedToWrite > 0 else { return }
         let progress = Float(totalBytesWritten) / Float(totalBytesExpectedToWrite)
         onProgress(progress)
