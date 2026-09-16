@@ -25,15 +25,58 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-          cache: gradle
 
-      - name: Run Russian TTS preprocessor tests
+      - name: Run isolated Russian TTS preprocessor tests
         shell: bash
         run: |
           set -euxo pipefail
           chmod +x ./gradlew
-          cat > local.properties <<'EOF'
-          KEYSTORE_PASSWORD=ci-placeholder
-          KEY_PASSWORD=ci-placeholder
+
+          TEST_DIR="$RUNNER_TEMP/russian-preprocessor-test"
+          PKG_DIR="$TEST_DIR/src/main/kotlin/com/nedmah/textlector/common/platform/tts/text"
+          TEST_PKG_DIR="$TEST_DIR/src/test/kotlin/com/nedmah/textlector"
+          mkdir -p "$PKG_DIR" "$TEST_PKG_DIR"
+
+          cp composeApp/src/commonMain/kotlin/com/nedmah/textlector/common/platform/tts/text/NeuralTextPreprocessor.kt "$PKG_DIR/"
+          cp composeApp/src/commonMain/kotlin/com/nedmah/textlector/common/platform/tts/text/RussianNumberNormalizer.kt "$PKG_DIR/"
+          cp composeApp/src/commonMain/kotlin/com/nedmah/textlector/common/platform/tts/text/RussianContextNumberNormalizer.kt "$PKG_DIR/"
+          cp composeApp/src/commonMain/kotlin/com/nedmah/textlector/common/platform/tts/text/RussianPronunciationRules.kt "$PKG_DIR/"
+          cp composeApp/src/commonTest/kotlin/com/nedmah/textlector/RussianTtsPreprocessorTest.kt "$TEST_PKG_DIR/"
+
+          cat > "$TEST_DIR/settings.gradle.kts" <<'EOF'
+          pluginManagement {
+              repositories {
+                  gradlePluginPortal()
+                  mavenCentral()
+              }
+          }
+          dependencyResolutionManagement {
+              repositories {
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "russian-preprocessor-test"
           EOF
-          ./gradlew :composeApp:jvmTest --tests 'com.nedmah.textlector.RussianTtsPreprocessorTest' --stacktrace
+
+          cat > "$TEST_DIR/build.gradle.kts" <<'EOF'
+          plugins {
+              kotlin("jvm") version "2.3.0"
+          }
+
+          kotlin {
+              jvmToolchain(21)
+          }
+
+          dependencies {
+              testImplementation(kotlin("test-junit5"))
+              testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+          }
+
+          tasks.test {
+              useJUnitPlatform()
+          }
+          EOF
+
+          ./gradlew -p "$TEST_DIR" test \
+            --tests 'com.nedmah.textlector.RussianTtsPreprocessorTest' \
+            --stacktrace
