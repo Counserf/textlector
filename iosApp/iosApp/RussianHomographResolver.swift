@@ -6,8 +6,8 @@ import OnnxRuntimeBindings
 ///
 /// This mirrors RUAccent's tiny2.1 omograph path: mark the target as <w>word</w>,
 /// score each stressed hypothesis as the second tokenizer sequence and choose the
-/// highest-probability variant. The model is loaded lazily and explicitly released
-/// when background book markup finishes so it does not overlap with the TTS model.
+/// highest-probability variant. The model is loaded lazily only when a real
+/// homograph is found and is explicitly released after background book markup.
 final class RussianHomographResolver {
     static let shared = RussianHomographResolver()
 
@@ -17,7 +17,8 @@ final class RussianHomographResolver {
     }
 
     private let lock = NSLock()
-    private var candidatesByWord: [String: [String]]?
+    private var candidatesPack: RuAccentPack?
+    private var attemptedPackLoad = false
     private var env: ORTEnv?
     private var session: ORTSession?
     private var tokenizer: BertWordPieceTokenizer?
@@ -31,15 +32,16 @@ final class RussianHomographResolver {
         return processLocked(text)
     }
 
-    /// Frees the ~40 MB tiny2.1 session and tokenizer after book markup. The next
-    /// book can load them again lazily. This is deliberately serialized with
-    /// process() so resources are never released during inference.
+    /// Frees the neural session, tokenizer and mmap handle after book markup. The
+    /// next book can load them again lazily. Serialized with process(), so resources
+    /// are never released during an inference call.
     func releaseResources() {
         lock.lock()
         session = nil
         tokenizer = nil
         env = nil
-        candidatesByWord = nil
+        candidatesPack = nil
+        attemptedPackLoad = false
         attemptedModelLoad = false
         lock.unlock()
         print("[RussianHomographResolver] resources released")
@@ -47,33 +49,38 @@ final class RussianHomographResolver {
 
     private func processLocked(_ text: String) -> String {
         guard !text.isEmpty else { return text }
-        guard let dictionary = loadCandidateDictionary(), !dictionary.isEmpty else { return text }
+        guard let pack = loadCandidatePack() else { return text }
 
         let nsText = text as NSString
         let fullRange = NSRange(location: 0, length: nsText.length)
         let regex = try! NSRegularExpression(pattern: "[А-Яа-яЁё\\u{0301}]+")
         let matches = regex.matches(in: text, range: fullRange)
 
-        // Determine whether neural inference is needed before loading the model.
-        let unresolved = matches.filter { match in
+        // Resolve candidates from the mmap pack first. If there are no ambiguous
+        // words in this paragraph, the ~10 MB quantized neural model is never loaded.
+        var unresolved: [(match: NSTextCheckingResult, hypotheses: [String])] = []
+        unresolved.reserveCapacity(2)
+        for match in matches {
             let word = nsText.substring(with: match.range)
-            guard !word.contains("\u{0301}") else { return false }
-            return (dictionary[word.lowercased()]?.count ?? 0) > 1
+            guard !word.contains("\u{0301}"),
+                  let variants = pack.listValue(for: word.lowercased()),
+                  variants.count > 1 else { continue }
+            unresolved.append((match, variants))
         }
         guard !unresolved.isEmpty else { return text }
 
         guard ensureModelLoaded(), let session, let tokenizer else {
-            print("[RussianHomographResolver] model unavailable; using dictionary fallback")
+            print("[RussianHomographResolver] model unavailable; leaving homographs unchanged")
             return text
         }
 
         var replacements: [Replacement] = []
         replacements.reserveCapacity(unresolved.count)
 
-        for match in unresolved {
+        for item in unresolved {
+            let match = item.match
+            let hypotheses = item.hypotheses
             let source = nsText.substring(with: match.range)
-            let key = source.lowercased()
-            guard let hypotheses = dictionary[key], hypotheses.count > 1 else { continue }
 
             // RUAccent wraps the target word in <w>...</w> before passing the
             // sentence/context as tokenizer sequence A and each hypothesis as B.
@@ -97,7 +104,7 @@ final class RussianHomographResolver {
             }
 
             // Match RUAccent OmographModel.classify(): choose the maximum score.
-            // Do not impose a second, app-specific confidence threshold.
+            // Do not impose an app-specific confidence threshold.
             guard let winner = scored.max(by: { $0.1 < $1.1 }) else { continue }
             print("[RussianHomographResolver] resolved '\(source)' -> '\(winner.0)' p=\(winner.1)")
 
@@ -116,41 +123,15 @@ final class RussianHomographResolver {
         return output as String
     }
 
-    private func loadCandidateDictionary() -> [String: [String]]? {
-        if let candidatesByWord { return candidatesByWord }
-
-        guard let url = Bundle.main.url(
-            forResource: "omographs",
-            withExtension: "json",
-            subdirectory: "pronunciation/ru"
-        ) else {
-            print("[RussianHomographResolver] omographs.json missing")
-            candidatesByWord = [:]
-            return candidatesByWord
+    private func loadCandidatePack() -> RuAccentPack? {
+        if let candidatesPack { return candidatesPack }
+        if attemptedPackLoad { return nil }
+        attemptedPackLoad = true
+        candidatesPack = RuAccentPack(resource: "omographs")
+        if candidatesPack == nil {
+            print("[RussianHomographResolver] omographs.rapack missing or invalid")
         }
-
-        do {
-            let data = try Data(contentsOf: url, options: .mappedIfSafe)
-            guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                candidatesByWord = [:]
-                return candidatesByWord
-            }
-
-            var result: [String: [String]] = [:]
-            result.reserveCapacity(root.count)
-            for (word, raw) in root {
-                if let variants = raw as? [String], variants.count > 1 {
-                    result[word.lowercased()] = variants
-                }
-            }
-            candidatesByWord = result
-            print("[RussianHomographResolver] homographs loaded: \(result.count)")
-            return result
-        } catch {
-            print("[RussianHomographResolver] dictionary load error: \(error)")
-            candidatesByWord = [:]
-            return candidatesByWord
-        }
+        return candidatesPack
     }
 
     private func ensureModelLoaded() -> Bool {
@@ -167,7 +148,9 @@ final class RussianHomographResolver {
             return false
         }
 
-        let modelURL = folder.appendingPathComponent("model.onnx")
+        let int8URL = folder.appendingPathComponent("model.int8.onnx")
+        let fp32URL = folder.appendingPathComponent("model.onnx")
+        let modelURL = FileManager.default.fileExists(atPath: int8URL.path) ? int8URL : fp32URL
         let vocabURL = folder.appendingPathComponent("vocab.txt")
         let addedTokensURL = folder.appendingPathComponent("added_tokens.json")
         let tokenizerConfigURL = folder.appendingPathComponent("tokenizer_config.json")
@@ -189,7 +172,7 @@ final class RussianHomographResolver {
             env = newEnv
             session = newSession
             tokenizer = newTokenizer
-            print("[RussianHomographResolver] RUAccent tiny2.1 loaded lazily")
+            print("[RussianHomographResolver] RUAccent tiny2.1 loaded lazily: \(modelURL.lastPathComponent)")
             return true
         } catch {
             print("[RussianHomographResolver] model load error: \(error)")
