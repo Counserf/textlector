@@ -8,15 +8,18 @@ import OnnxRuntimeBindings
 /// ordinary paragraphs never pay its memory/inference cost. If the model is absent
 /// or inference is uncertain, the source word is left unchanged and downstream
 /// deterministic pronunciation rules remain the fallback.
-actor RussianHomographResolver {
+final class RussianHomographResolver {
     static let shared = RussianHomographResolver()
 
     private struct Replacement {
         let range: NSRange
-        let source: String
         let replacement: String
     }
 
+    /// TTS prefetch can ask for two paragraphs concurrently. Keep a single ORT
+    /// session and serialize its tiny classification calls instead of duplicating
+    /// the model in memory.
+    private let lock = NSLock()
     private var candidatesByWord: [String: [String]]?
     private var env: ORTEnv?
     private var session: ORTSession?
@@ -28,7 +31,15 @@ actor RussianHomographResolver {
     private let minimumProbability: Float = 0.60
     private let minimumMargin: Float = 0.08
 
+    private init() {}
+
     func process(_ text: String) -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        return processLocked(text)
+    }
+
+    private func processLocked(_ text: String) -> String {
         guard !text.isEmpty else { return text }
         guard let dictionary = loadCandidateDictionary(), !dictionary.isEmpty else { return text }
 
@@ -95,7 +106,7 @@ actor RussianHomographResolver {
                 source: source,
                 replacement: Self.plusToCombiningAcute(winner.0)
             )
-            replacements.append(Replacement(range: match.range, source: source, replacement: accented))
+            replacements.append(Replacement(range: match.range, replacement: accented))
         }
 
         guard !replacements.isEmpty else { return text }
@@ -196,7 +207,7 @@ actor RussianHomographResolver {
 
         // RUAccent accepts up to 512 model tokens. Paragraphs can be much longer,
         // so keep a generous character window centered on the target before the
-        // tokenizer performs the exact token-level truncation.
+        // tokenizer performs exact token-level truncation.
         let markerLocation = targetRange.location
         let radius = 900
         let start = max(0, markerLocation - radius)
@@ -241,7 +252,7 @@ actor RussianHomographResolver {
 
         var logits = [Float](repeating: 0, count: 2)
         (data as NSData).getBytes(&logits, length: 2 * MemoryLayout<Float>.size)
-        let delta = max(-80, min(80, logits[1] - logits[0]))
+        let delta = max(Float(-80), min(Float(80), logits[1] - logits[0]))
         return 1 / (1 + exp(-delta))
     }
 
@@ -480,14 +491,12 @@ private struct BertWordPieceTokenizer {
     }
 
     private static func isPunctuation(_ character: Character) -> Bool {
-        if let scalar = character.unicodeScalars.first {
-            let value = scalar.value
-            if (33...47).contains(value) || (58...64).contains(value) ||
-                (91...96).contains(value) || (123...126).contains(value) {
-                return true
-            }
-            return CharacterSet.punctuationCharacters.contains(scalar)
+        guard let scalar = character.unicodeScalars.first else { return false }
+        let value = scalar.value
+        if (33...47).contains(value) || (58...64).contains(value) ||
+            (91...96).contains(value) || (123...126).contains(value) {
+            return true
         }
-        return false
+        return CharacterSet.punctuationCharacters.contains(scalar)
     }
 }
