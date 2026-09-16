@@ -69,8 +69,15 @@ import ComposeApp
             )
         }
 
+        // The common Kotlin preprocessor already normalizes Russian numbers and
+        // resolves high-confidence homographs. The bundled RUAccent dictionaries
+        // add broad deterministic ё/stress coverage without changing book text.
+        let preparedText = currentLang.lowercased().hasPrefix("ru")
+            ? RussianPronunciationDictionary.shared.process(text)
+            : text
+
         guard let data = bridge.generate(
-            text: text,
+            text: preparedText,
             lang: currentLang,
             voiceStyleJson: styleJson,
             speed: speed,
@@ -140,6 +147,162 @@ import ComposeApp
             code: 1,
             userInfo: [NSLocalizedDescriptionKey: message]
         )
+    }
+}
+
+/// Broad deterministic Russian pronunciation dictionary shared by Piper and
+/// Supertonic on iOS. The bundle contains RUAccent's compact dictionaries only;
+/// contextual homographs are deliberately skipped here so they are not assigned
+/// the wrong meaning. They remain handled by the common contextual rules (and a
+/// future optional neural homograph resolver).
+final class RussianPronunciationDictionary {
+    static let shared = RussianPronunciationDictionary()
+
+    private let accents: [String: String]
+    private let yoWords: [String: String]
+    private let homographs: Set<String>
+    private let yoHomographs: Set<String>
+    private let wordRegex: NSRegularExpression
+
+    private init() {
+        accents = Self.loadStringMap("accents_nn")
+        yoWords = Self.loadStringMap("yo_words")
+        homographs = Self.loadKeys("omographs")
+        yoHomographs = Self.loadKeys("yo_homographs")
+        wordRegex = try! NSRegularExpression(pattern: "[А-Яа-яЁё\u{0301}]+")
+
+        print(
+            "[RussianPronunciationDictionary] loaded: accents=\(accents.count), " +
+            "yo=\(yoWords.count), homographs=\(homographs.count), yoHomographs=\(yoHomographs.count)"
+        )
+    }
+
+    func process(_ text: String) -> String {
+        guard !text.isEmpty, !accents.isEmpty || !yoWords.isEmpty else { return text }
+
+        let originalText = text as NSString
+        let fullRange = NSRange(location: 0, length: originalText.length)
+        let matches = wordRegex.matches(in: text, range: fullRange)
+        guard !matches.isEmpty else { return text }
+
+        // Replace backwards so UTF-16 ranges obtained from the original string
+        // remain valid when combining accents make replacement strings longer.
+        let output = NSMutableString(string: text)
+        for match in matches.reversed() {
+            let original = originalText.substring(with: match.range)
+            if original.contains("\u{0301}") { continue }
+
+            let lower = original.lowercased()
+            var candidate = original
+
+            // е/ё can itself be contextual (e.g. «все/всё»), so do not force
+            // deterministic ё for entries explicitly listed as yo-homographs.
+            if !yoHomographs.contains(lower), let yo = yoWords[lower] {
+                candidate = Self.preserveCase(source: original, replacement: yo)
+            }
+
+            let normalizedKey = candidate.lowercased()
+            let isContextual = homographs.contains(lower) || homographs.contains(normalizedKey)
+
+            // accents_nn uses RUAccent's '+' immediately before the stressed
+            // vowel. Convert it to U+0301 combining acute, which our neural TTS
+            // preprocessing already uses.
+            if !isContextual,
+               let rawAccent = accents[normalizedKey] ?? accents[lower] {
+                let accented = Self.plusToCombiningAcute(rawAccent)
+                candidate = Self.preserveCase(source: original, replacement: accented)
+            }
+
+            if candidate != original {
+                output.replaceCharacters(in: match.range, with: candidate)
+            }
+        }
+
+        return output as String
+    }
+
+    private static func loadStringMap(_ name: String) -> [String: String] {
+        guard let url = Bundle.main.url(
+            forResource: name,
+            withExtension: "json",
+            subdirectory: "pronunciation/ru"
+        ) else {
+            print("[RussianPronunciationDictionary] missing resource: \(name).json")
+            return [:]
+        }
+
+        do {
+            let data = try Data(contentsOf: url, options: .mappedIfSafe)
+            guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                print("[RussianPronunciationDictionary] invalid dictionary JSON: \(name)")
+                return [:]
+            }
+            var result: [String: String] = [:]
+            result.reserveCapacity(object.count)
+            for (key, value) in object {
+                if let string = value as? String {
+                    result[key.lowercased()] = string
+                }
+            }
+            return result
+        } catch {
+            print("[RussianPronunciationDictionary] load error \(name): \(error)")
+            return [:]
+        }
+    }
+
+    private static func loadKeys(_ name: String) -> Set<String> {
+        guard let url = Bundle.main.url(
+            forResource: name,
+            withExtension: "json",
+            subdirectory: "pronunciation/ru"
+        ) else {
+            print("[RussianPronunciationDictionary] missing resource: \(name).json")
+            return []
+        }
+
+        do {
+            let data = try Data(contentsOf: url, options: .mappedIfSafe)
+            guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                print("[RussianPronunciationDictionary] invalid key dictionary JSON: \(name)")
+                return []
+            }
+            return Set(object.keys.map { $0.lowercased() })
+        } catch {
+            print("[RussianPronunciationDictionary] load error \(name): \(error)")
+            return []
+        }
+    }
+
+    private static func plusToCombiningAcute(_ value: String) -> String {
+        var result = String()
+        result.reserveCapacity(value.count + 1)
+        var accentNext = false
+
+        for character in value {
+            if character == "+" {
+                accentNext = true
+                continue
+            }
+            result.append(character)
+            if accentNext {
+                result.append("\u{0301}")
+                accentNext = false
+            }
+        }
+        return result
+    }
+
+    private static func preserveCase(source: String, replacement: String) -> String {
+        guard !source.isEmpty, !replacement.isEmpty else { return replacement }
+
+        if source == source.uppercased() {
+            return replacement.uppercased()
+        }
+        if source.first?.isUppercase == true {
+            return replacement.prefix(1).uppercased() + String(replacement.dropFirst())
+        }
+        return replacement
     }
 }
 
