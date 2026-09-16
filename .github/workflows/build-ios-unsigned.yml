@@ -242,88 +242,14 @@ jobs:
           DEST="$APP_PATH/pronunciation/ru/homograph/tiny2.1"
           mkdir -p "$DEST"
           BASE='https://huggingface.co/ruaccent/accentuator/resolve/c3970fdf3e3b4b6baeb0b42f38a411abb2b4adfb/nn/nn_omograph/tiny2.1'
-          SOURCE_MODEL='/tmp/ruaccent-tiny2.1-model.onnx'
 
-          curl -L --fail --retry 3 --retry-delay 2 "$BASE/model.onnx" -o "$SOURCE_MODEL"
-          echo '2f60ac3391b6ac2500792dc9125414c95767b6b3c49adb8472b7ab6574fe84e8' " $SOURCE_MODEL" | shasum -a 256 -c -
-
-          for name in vocab.txt added_tokens.json tokenizer_config.json config.json special_tokens_map.json tokenizer.json; do
+          for name in model.onnx vocab.txt added_tokens.json tokenizer_config.json config.json special_tokens_map.json tokenizer.json; do
             curl -L --fail --retry 3 --retry-delay 2 "$BASE/$name" -o "$DEST/$name"
             test -s "$DEST/$name"
           done
 
-          # Keep a verified FP32 model in the bundle first. The app already prefers
-          # model.int8.onnx when present and transparently falls back to model.onnx.
-          cp "$SOURCE_MODEL" "$DEST/model.onnx"
-          test -s "$DEST/model.onnx"
-
-          python3 -m pip install --quiet --disable-pip-version-check 'onnxruntime==1.24.2' onnx
-
-          FP32_MODEL="$DEST/model.onnx" python3 - <<'PY'
-          import os
-          import onnx
-          import onnxruntime as ort
-
-          model_path = os.environ['FP32_MODEL']
-          model = onnx.load(model_path, load_external_data=True)
-          onnx.checker.check_model(model)
-          session = ort.InferenceSession(model_path, providers=['CPUExecutionProvider'])
-          print('FP32 tiny2.1 ONNX load OK:', [item.name for item in session.get_inputs()])
-          PY
-
-          set +e
-          SOURCE_MODEL="$SOURCE_MODEL" DEST_MODEL="$DEST/model.int8.onnx" python3 - <<'PY'
-          import os
-          from onnxruntime.quantization import QuantType, quantize_dynamic
-
-          source = os.environ['SOURCE_MODEL']
-          dest = os.environ['DEST_MODEL']
-          quantize_dynamic(
-              model_input=source,
-              model_output=dest,
-              weight_type=QuantType.QInt8,
-              per_channel=True,
-              op_types_to_quantize=['MatMul', 'Gemm'],
-          )
-
-          source_size = os.path.getsize(source)
-          dest_size = os.path.getsize(dest)
-          print(f'RUAccent tiny2.1 FP32: {source_size / 1024 / 1024:.2f} MiB')
-          print(f'RUAccent tiny2.1 INT8: {dest_size / 1024 / 1024:.2f} MiB')
-          if dest_size >= source_size:
-              raise SystemExit('Quantized model is not smaller than source')
-          PY
-          QUANTIZE_STATUS=$?
-
-          if [ "$QUANTIZE_STATUS" -eq 0 ] && [ -s "$DEST/model.int8.onnx" ]; then
-            INT8_MODEL="$DEST/model.int8.onnx" python3 - <<'PY'
-          import os
-          import onnx
-          import onnxruntime as ort
-
-          model_path = os.environ['INT8_MODEL']
-          model = onnx.load(model_path, load_external_data=True)
-          onnx.checker.check_model(model)
-          ort.InferenceSession(model_path, providers=['CPUExecutionProvider'])
-          print('INT8 tiny2.1 ONNX load OK')
-          PY
-            INT8_STATUS=$?
-          else
-            INT8_STATUS=1
-          fi
-          set -e
-
-          if [ "$QUANTIZE_STATUS" -eq 0 ] && [ "$INT8_STATUS" -eq 0 ] && [ -s "$DEST/model.int8.onnx" ]; then
-            rm -f "$DEST/model.onnx"
-            echo 'Bundled RUAccent tiny2.1 INT8 model.'
-          else
-            rm -f "$DEST/model.int8.onnx"
-            echo '::warning::RUAccent tiny2.1 INT8 quantization or validation failed; bundling verified FP32 model instead.'
-            test -s "$DEST/model.onnx"
-          fi
-
-          rm -f "$SOURCE_MODEL"
-          echo 'Bundled RUAccent tiny2.1 resources:'
+          echo '2f60ac3391b6ac2500792dc9125414c95767b6b3c49adb8472b7ab6574fe84e8' " $DEST/model.onnx" | shasum -a 256 -c -
+          echo 'Bundled verified RUAccent tiny2.1 FP32 model:'
           ls -lh "$DEST"
 
       - name: Package unsigned IPA
