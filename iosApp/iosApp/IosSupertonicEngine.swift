@@ -140,9 +140,174 @@ import ComposeApp
     }
 }
 
-/// Deterministic RUAccent dictionaries for ordinary stress and ё. The singleton
-/// is explicitly releasable so several large Swift dictionaries do not remain in
-/// memory when background markup hands control over to Piper/Supertonic.
+/// Compact mmap-friendly RUAccent dictionary. The binary file keeps a sorted
+/// fixed-width index followed by UTF-8 bytes, so lookups do not materialize
+/// hundreds of thousands of Swift Dictionary/String objects in RAM.
+final class RuAccentPack {
+    private static let magic: [UInt8] = [82, 65, 80, 65, 67, 75, 49, 0] // RAPACK1\0
+    private static let headerSize = 16
+    private static let expectedEntrySize = 16
+
+    private let data: Data
+    private let count: Int
+    private let entrySize: Int
+    private let blobOffset: Int
+
+    convenience init?(resource name: String) {
+        guard let url = Bundle.main.url(
+            forResource: name,
+            withExtension: "rapack",
+            subdirectory: "pronunciation/ru"
+        ) else {
+            print("[RuAccentPack] missing resource: \(name).rapack")
+            return nil
+        }
+        self.init(url: url)
+    }
+
+    init?(url: URL) {
+        guard let mapped = try? Data(contentsOf: url, options: .mappedIfSafe),
+              mapped.count >= Self.headerSize else {
+            print("[RuAccentPack] failed to mmap \(url.lastPathComponent)")
+            return nil
+        }
+
+        let validMagic = mapped.withUnsafeBytes { raw -> Bool in
+            let bytes = raw.bindMemory(to: UInt8.self)
+            guard bytes.count >= Self.magic.count else { return false }
+            for i in 0..<Self.magic.count where bytes[i] != Self.magic[i] { return false }
+            return true
+        }
+        guard validMagic else {
+            print("[RuAccentPack] invalid magic in \(url.lastPathComponent)")
+            return nil
+        }
+
+        let fileCount = Int(Self.readUInt32(mapped, at: 8))
+        let fileEntrySize = Int(Self.readUInt32(mapped, at: 12))
+        guard fileEntrySize == Self.expectedEntrySize else {
+            print("[RuAccentPack] unsupported entry size \(fileEntrySize)")
+            return nil
+        }
+
+        let fileBlobOffset = Self.headerSize + fileCount * fileEntrySize
+        guard fileCount >= 0, fileBlobOffset <= mapped.count else {
+            print("[RuAccentPack] invalid index bounds in \(url.lastPathComponent)")
+            return nil
+        }
+
+        data = mapped
+        count = fileCount
+        entrySize = fileEntrySize
+        blobOffset = fileBlobOffset
+        print("[RuAccentPack] mmap \(url.lastPathComponent): entries=\(count), bytes=\(mapped.count)")
+    }
+
+    func contains(_ key: String) -> Bool {
+        findValueRange(for: key) != nil
+    }
+
+    func stringValue(for key: String) -> String? {
+        guard let range = findValueRange(for: key) else { return nil }
+        return data.withUnsafeBytes { raw -> String? in
+            let bytes = raw.bindMemory(to: UInt8.self)
+            guard let base = bytes.baseAddress,
+                  range.lowerBound >= 0,
+                  range.upperBound <= bytes.count else { return nil }
+            let buffer = UnsafeBufferPointer(
+                start: base.advanced(by: range.lowerBound),
+                count: range.count
+            )
+            return String(decoding: buffer, as: UTF8.self)
+        }
+    }
+
+    func listValue(for key: String) -> [String]? {
+        guard let raw = stringValue(for: key), !raw.isEmpty else { return nil }
+        return raw.split(separator: "\u{001F}", omittingEmptySubsequences: true).map(String.init)
+    }
+
+    private func findValueRange(for key: String) -> Range<Int>? {
+        guard count > 0 else { return nil }
+        let query = Array(key.lowercased().utf8)
+        guard !query.isEmpty else { return nil }
+
+        return data.withUnsafeBytes { raw -> Range<Int>? in
+            let bytes = raw.bindMemory(to: UInt8.self)
+            var low = 0
+            var high = count - 1
+
+            while low <= high {
+                let mid = low + (high - low) / 2
+                let entry = Self.headerSize + mid * entrySize
+                guard entry + Self.expectedEntrySize <= bytes.count else { return nil }
+
+                let keyOffset = Int(Self.readUInt32(raw, at: entry))
+                let keyLength = Int(Self.readUInt32(raw, at: entry + 4))
+                let valueOffset = Int(Self.readUInt32(raw, at: entry + 8))
+                let valueLength = Int(Self.readUInt32(raw, at: entry + 12))
+                let keyStart = blobOffset + keyOffset
+                let valueStart = blobOffset + valueOffset
+
+                guard keyStart >= blobOffset,
+                      keyStart + keyLength <= bytes.count,
+                      valueStart >= blobOffset,
+                      valueStart + valueLength <= bytes.count else { return nil }
+
+                let comparison = Self.compare(
+                    bytes: bytes,
+                    start: keyStart,
+                    length: keyLength,
+                    query: query
+                )
+                if comparison == 0 {
+                    return valueStart..<(valueStart + valueLength)
+                } else if comparison < 0 {
+                    low = mid + 1
+                } else {
+                    high = mid - 1
+                }
+            }
+            return nil
+        }
+    }
+
+    private static func compare(
+        bytes: UnsafeBufferPointer<UInt8>,
+        start: Int,
+        length: Int,
+        query: [UInt8]
+    ) -> Int {
+        let common = min(length, query.count)
+        if common > 0 {
+            for i in 0..<common {
+                let left = bytes[start + i]
+                let right = query[i]
+                if left < right { return -1 }
+                if left > right { return 1 }
+            }
+        }
+        if length < query.count { return -1 }
+        if length > query.count { return 1 }
+        return 0
+    }
+
+    private static func readUInt32(_ data: Data, at offset: Int) -> UInt32 {
+        data.withUnsafeBytes { raw in readUInt32(raw, at: offset) }
+    }
+
+    private static func readUInt32(_ raw: UnsafeRawBufferPointer, at offset: Int) -> UInt32 {
+        let bytes = raw.bindMemory(to: UInt8.self)
+        guard offset >= 0, offset + 4 <= bytes.count else { return 0 }
+        return UInt32(bytes[offset]) |
+            (UInt32(bytes[offset + 1]) << 8) |
+            (UInt32(bytes[offset + 2]) << 16) |
+            (UInt32(bytes[offset + 3]) << 24)
+    }
+}
+
+/// Deterministic RUAccent dictionaries for ordinary stress and ё. The backing
+/// packs remain mmap-backed and are explicitly releasable before TTS loads.
 final class RussianPronunciationDictionary {
     private static let instanceLock = NSLock()
     private static var instance: RussianPronunciationDictionary?
@@ -160,26 +325,26 @@ final class RussianPronunciationDictionary {
         instanceLock.lock()
         instance = nil
         instanceLock.unlock()
-        print("[RussianPronunciationDictionary] resources released")
+        print("[RussianPronunciationDictionary] mmap resources released")
     }
 
-    private let accents: [String: String]
-    private let yoWords: [String: String]
-    private let homographs: Set<String>
-    private let yoHomographs: Set<String>
+    private let accents: RuAccentPack?
+    private let yoWords: RuAccentPack?
+    private let homographs: RuAccentPack?
+    private let yoHomographs: RuAccentPack?
     private let wordRegex: NSRegularExpression
 
     private init() {
-        accents = Self.loadStringMap("accents_nn")
-        yoWords = Self.loadStringMap("yo_words")
-        homographs = Self.loadKeys("omographs")
-        yoHomographs = Self.loadKeys("yo_homographs")
+        accents = RuAccentPack(resource: "accents_nn")
+        yoWords = RuAccentPack(resource: "yo_words")
+        homographs = RuAccentPack(resource: "omographs")
+        yoHomographs = RuAccentPack(resource: "yo_homographs")
         wordRegex = try! NSRegularExpression(pattern: "[А-Яа-яЁё\\u{0301}]+")
-        print("[RussianPronunciationDictionary] loaded: accents=\(accents.count), yo=\(yoWords.count), homographs=\(homographs.count), yoHomographs=\(yoHomographs.count)")
+        print("[RussianPronunciationDictionary] mmap packs ready")
     }
 
     func process(_ text: String) -> String {
-        guard !text.isEmpty, !accents.isEmpty || !yoWords.isEmpty else { return text }
+        guard !text.isEmpty, accents != nil || yoWords != nil else { return text }
 
         let originalText = text as NSString
         let fullRange = NSRange(location: 0, length: originalText.length)
@@ -194,16 +359,16 @@ final class RussianPronunciationDictionary {
             let lower = original.lowercased()
             var candidate = original
 
-            // Context-dependent ё forms are intentionally not guessed by a static
-            // dictionary. Safe, non-homographic ё replacements are still applied.
-            if !yoHomographs.contains(lower), let yo = yoWords[lower] {
+            if yoHomographs?.contains(lower) != true,
+               let yo = yoWords?.stringValue(for: lower) {
                 candidate = Self.preserveCase(source: original, replacement: yo)
             }
 
             let normalizedKey = candidate.lowercased()
-            let isContextual = homographs.contains(lower) || homographs.contains(normalizedKey)
+            let isContextual = homographs?.contains(lower) == true ||
+                homographs?.contains(normalizedKey) == true
             if !isContextual,
-               let rawAccent = accents[normalizedKey] ?? accents[lower] {
+               let rawAccent = accents?.stringValue(for: normalizedKey) ?? accents?.stringValue(for: lower) {
                 let accented = Self.plusToCombiningAcute(rawAccent)
                 candidate = Self.preserveCase(source: original, replacement: accented)
             }
@@ -213,41 +378,6 @@ final class RussianPronunciationDictionary {
             }
         }
         return output as String
-    }
-
-    private static func loadStringMap(_ name: String) -> [String: String] {
-        guard let url = Bundle.main.url(forResource: name, withExtension: "json", subdirectory: "pronunciation/ru") else {
-            print("[RussianPronunciationDictionary] missing resource: \(name).json")
-            return [:]
-        }
-        do {
-            let data = try Data(contentsOf: url, options: .mappedIfSafe)
-            guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [:] }
-            var result: [String: String] = [:]
-            result.reserveCapacity(object.count)
-            for (key, value) in object {
-                if let string = value as? String { result[key.lowercased()] = string }
-            }
-            return result
-        } catch {
-            print("[RussianPronunciationDictionary] load error \(name): \(error)")
-            return [:]
-        }
-    }
-
-    private static func loadKeys(_ name: String) -> Set<String> {
-        guard let url = Bundle.main.url(forResource: name, withExtension: "json", subdirectory: "pronunciation/ru") else {
-            print("[RussianPronunciationDictionary] missing resource: \(name).json")
-            return []
-        }
-        do {
-            let data = try Data(contentsOf: url, options: .mappedIfSafe)
-            guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [] }
-            return Set(object.keys.map { $0.lowercased() })
-        } catch {
-            print("[RussianPronunciationDictionary] load error \(name): \(error)")
-            return []
-        }
     }
 
     private static func plusToCombiningAcute(_ value: String) -> String {
