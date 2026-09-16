@@ -1,6 +1,7 @@
 package com.nedmah.textlector.common.platform.tts
 
 import com.nedmah.textlector.common.platform.logging.CrashReporter
+import com.nedmah.textlector.common.platform.logging.TtsDiagnosticLog
 import com.nedmah.textlector.common.platform.tts.text.NeuralTextPreprocessor
 import com.nedmah.textlector.domain.model.Paragraph
 import com.nedmah.textlector.domain.model.TtsEngineType
@@ -19,12 +20,15 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlin.concurrent.Volatile
 
 private const val ENGINE_LOGS = true
 private fun log(message: String) {
     if (ENGINE_LOGS) println("[SwitchableTtsEngine] $message")
+    TtsDiagnosticLog.append("Engine", message)
 }
 
 class SwitchableTtsEngine(
@@ -44,10 +48,13 @@ class SwitchableTtsEngine(
     @Volatile private var currentLanguage: String = "ru"
 
     private var currentVoiceKey: String? = null
+    private var currentVoiceModel: VoiceModel? = null
+    private var loadedVoiceSignature: String? = null
     private var currentEngineType: TtsEngineType = TtsEngineType.SYSTEM
     private var ttsQueue: TtsQueue? = null
     private var paragraphs: List<Paragraph> = emptyList()
     private val fallbackPreprocessor = NeuralTextPreprocessor()
+    private val voiceLoadMutex = Mutex()
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     init {
@@ -57,12 +64,14 @@ class SwitchableTtsEngine(
     }
 
     override suspend fun loadVoice(model: VoiceModel) {
-        log("loadVoice: ${model.id}")
-        (active as? SherpaOnnxTtsEngine)?.loadVoice(model)
+        currentVoiceModel = model
+        currentVoiceKey = model.id.name
+        loadedVoiceSignature = null
+        ensureNeuralVoiceLoaded()
     }
 
     override fun setPlaylist(paragraphs: List<Paragraph>) {
-        log("setPlaylist: ${paragraphs.size} paragraphs")
+        log("setPlaylist: ${paragraphs.size} paragraphs, prepared=${paragraphs.count { it.ttsText != null }}")
         this.paragraphs = paragraphs
         nativeEngine.setPlaylist(paragraphs)
         sherpaEngine.setPlaylist(paragraphs)
@@ -75,6 +84,8 @@ class SwitchableTtsEngine(
 
         if (queue != null) {
             if (index !in paragraphs.indices) return
+            ensureNeuralVoiceLoaded()
+
             val cached = queue.getCachedAudio(index)
             if (cached == null) _isBuffering.emit(true)
 
@@ -94,9 +105,9 @@ class SwitchableTtsEngine(
         }
     }
 
-    /** Used by the book background worker. Audio is generated but not played. */
     suspend fun preGenerateParagraph(paragraph: Paragraph, speed: Float): Boolean {
         val queue = ttsQueue ?: return false
+        ensureNeuralVoiceLoaded()
         return queue.preGenerate(paragraph, speed)
     }
 
@@ -114,11 +125,27 @@ class SwitchableTtsEngine(
     }
 
     override fun shutdown() {
+        log("shutdown()")
         active.stop()
         scope.coroutineContext[Job]?.cancel()
         nativeEngine.shutdown()
         sherpaEngine.shutdown()
         supertonicEngine.shutdown()
+    }
+
+    private suspend fun ensureNeuralVoiceLoaded() {
+        val engine = active as? SherpaOnnxTtsEngine ?: return
+        val model = currentVoiceModel ?: return
+        val signature = "${currentEngineType}_${model.id}"
+        if (loadedVoiceSignature == signature) return
+
+        voiceLoadMutex.withLock {
+            if (loadedVoiceSignature == signature) return@withLock
+            log("lazy load voice: $signature")
+            engine.loadVoice(model)
+            loadedVoiceSignature = signature
+            log("voice ready: $signature")
+        }
     }
 
     private fun createNeuralQueue(engine: SherpaOnnxTtsEngine): TtsQueue {
@@ -133,6 +160,7 @@ class SwitchableTtsEngine(
 
     private suspend fun handleEngineSwitch(prefs: UserPreferences) {
         val previousLanguage = currentLanguage
+        val previousEngine = currentEngineType
         currentLanguage = prefs.language
         currentEngineType = prefs.engineType
 
@@ -143,13 +171,17 @@ class SwitchableTtsEngine(
         }
 
         val resolvedVoice = prefs.resolveVoiceId()
+        val model = VoiceRegistry.getById(resolvedVoice)
         val voiceKey = resolvedVoice.name
         val languageChanged = previousLanguage != currentLanguage
         val voiceChanged = currentVoiceKey != voiceKey
+        val engineChanged = active !== targetEngine || previousEngine != currentEngineType
+
+        currentVoiceModel = model
+        if (engineChanged || voiceChanged) loadedVoiceSignature = null
 
         if (active === targetEngine) {
             if (targetEngine is SherpaOnnxTtsEngine) {
-                if (voiceChanged) targetEngine.loadVoice(VoiceRegistry.getById(resolvedVoice))
                 if (ttsQueue == null || languageChanged || voiceChanged) {
                     currentVoiceKey = voiceKey
                     ttsQueue?.shutdown()
@@ -159,16 +191,17 @@ class SwitchableTtsEngine(
                 }
             } else {
                 currentVoiceKey = null
+                ttsQueue?.shutdown()
+                ttsQueue = null
             }
             return
         }
 
+        log("switching to ${prefs.engineType}; voice will load lazily")
         active.stop()
         active = targetEngine
 
         if (targetEngine is SherpaOnnxTtsEngine) {
-            val model = VoiceRegistry.getById(resolvedVoice)
-            targetEngine.loadVoice(model)
             currentVoiceKey = voiceKey
             ttsQueue?.shutdown()
             ttsQueue = createNeuralQueue(targetEngine)
