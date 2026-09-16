@@ -21,9 +21,11 @@ data class BookProcessingState(
     val documentId: String = "",
     val totalParagraphs: Int = 0,
     val markupDone: Int = 0,
+    val markupReadyIndices: Set<Int> = emptySet(),
     val markupCurrentIndex: Int? = null,
     val markupRunning: Boolean = false,
     val audioDone: Int = 0,
+    val audioReadyIndices: Set<Int> = emptySet(),
     val audioCurrentIndex: Int? = null,
     val audioRunning: Boolean = false,
     val error: String? = null,
@@ -55,27 +57,35 @@ class BookProcessingCoordinator(
             runCatching {
                 val language = preferencesRepository.getPreferences().first().language
                 val paragraphs = paragraphRepository.getParagraphsByDocumentId(documentId).first()
-                var done = paragraphs.count { it.ttsText != null }
+                val ready = paragraphs.filter { it.ttsText != null }.map { it.index }.toMutableSet()
                 update(documentId) {
                     it.copy(
                         totalParagraphs = paragraphs.size,
-                        markupDone = done,
-                        markupRunning = done < paragraphs.size,
+                        markupDone = ready.size,
+                        markupReadyIndices = ready.toSet(),
+                        markupRunning = ready.size < paragraphs.size,
                         error = null
                     )
                 }
 
                 for (paragraph in paragraphs) {
-                    if (paragraph.ttsText != null) continue
+                    if (paragraph.index in ready) continue
                     update(documentId) { it.copy(markupCurrentIndex = paragraph.index, markupRunning = true) }
                     val prepared = marker.prepare(paragraph.text, language)
                     paragraphRepository.updateTtsText(paragraph.id, prepared).getOrThrow()
-                    done += 1
-                    update(documentId) { it.copy(markupDone = done) }
+                    ready += paragraph.index
+                    update(documentId) {
+                        it.copy(markupDone = ready.size, markupReadyIndices = ready.toSet())
+                    }
                 }
 
                 update(documentId) {
-                    it.copy(markupDone = paragraphs.size, markupCurrentIndex = null, markupRunning = false)
+                    it.copy(
+                        markupDone = paragraphs.size,
+                        markupReadyIndices = paragraphs.map { p -> p.index }.toSet(),
+                        markupCurrentIndex = null,
+                        markupRunning = false
+                    )
                 }
             }.onFailure { e ->
                 update(documentId) {
@@ -94,19 +104,29 @@ class BookProcessingCoordinator(
                 if (!engine.canPreGenerate()) error("Для предгенерации выберите Piper или Supertonic")
 
                 val initial = paragraphRepository.getParagraphsByDocumentId(documentId).first()
-                var done = 0
+                val ready = mutableSetOf<Int>()
+                for (paragraph in initial) {
+                    if (engine.isParagraphAudioReady(paragraph, prefs.speechSpeed)) ready += paragraph.index
+                }
                 update(documentId) {
-                    it.copy(totalParagraphs = initial.size, audioRunning = true, audioDone = 0, error = null)
+                    it.copy(
+                        totalParagraphs = initial.size,
+                        audioRunning = ready.size < initial.size,
+                        audioDone = ready.size,
+                        audioReadyIndices = ready.toSet(),
+                        error = null
+                    )
                 }
 
                 for (index in initial.indices) {
                     val paragraph = paragraphRepository.getParagraphsByDocumentId(documentId)
-                        .first { list -> list.getOrNull(index)?.ttsText != null }
-                        [index]
+                        .first { list -> list.getOrNull(index)?.ttsText != null }[index]
 
-                    if (engine.isParagraphAudioReady(paragraph, prefs.speechSpeed)) {
-                        done += 1
-                        update(documentId) { it.copy(audioDone = done) }
+                    if (paragraph.index in ready || engine.isParagraphAudioReady(paragraph, prefs.speechSpeed)) {
+                        ready += paragraph.index
+                        update(documentId) {
+                            it.copy(audioDone = ready.size, audioReadyIndices = ready.toSet())
+                        }
                         continue
                     }
 
@@ -114,12 +134,19 @@ class BookProcessingCoordinator(
                     if (!engine.preGenerateParagraph(paragraph, prefs.speechSpeed)) {
                         error("Не удалось сгенерировать абзац ${paragraph.index + 1}")
                     }
-                    done += 1
-                    update(documentId) { it.copy(audioDone = done) }
+                    ready += paragraph.index
+                    update(documentId) {
+                        it.copy(audioDone = ready.size, audioReadyIndices = ready.toSet())
+                    }
                 }
 
                 update(documentId) {
-                    it.copy(audioDone = initial.size, audioCurrentIndex = null, audioRunning = false)
+                    it.copy(
+                        audioDone = initial.size,
+                        audioReadyIndices = initial.map { p -> p.index }.toSet(),
+                        audioCurrentIndex = null,
+                        audioRunning = false
+                    )
                 }
             }.onFailure { e ->
                 update(documentId) {
@@ -133,15 +160,21 @@ class BookProcessingCoordinator(
         scope.launch(Dispatchers.IO) {
             val prefs = preferencesRepository.getPreferences().first()
             val paragraphs = paragraphRepository.getParagraphsByDocumentId(documentId).first()
-            val marked = paragraphs.count { it.ttsText != null }
-            var audio = 0
+            val marked = paragraphs.filter { it.ttsText != null }.map { it.index }.toSet()
+            val audio = mutableSetOf<Int>()
             if (engine.canPreGenerate()) {
                 for (paragraph in paragraphs) {
-                    if (engine.isParagraphAudioReady(paragraph, prefs.speechSpeed)) audio++
+                    if (engine.isParagraphAudioReady(paragraph, prefs.speechSpeed)) audio += paragraph.index
                 }
             }
             update(documentId) {
-                it.copy(totalParagraphs = paragraphs.size, markupDone = marked, audioDone = audio)
+                it.copy(
+                    totalParagraphs = paragraphs.size,
+                    markupDone = marked.size,
+                    markupReadyIndices = marked,
+                    audioDone = audio.size,
+                    audioReadyIndices = audio
+                )
             }
         }
     }
