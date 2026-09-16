@@ -10,7 +10,7 @@ on:
       - '.github/workflows/test-russian-number-branch.yml'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   test:
@@ -19,6 +19,55 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Patch legacy Cyrillic regex boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('composeApp/src/commonMain/kotlin/com/nedmah/textlector/common/platform/tts/text/RussianNumberNormalizer.kt')
+          text = path.read_text()
+          replacements = [
+              (
+                  r'''"""\b(в|на)\s+(\d{4})\s+(году)\b"""''',
+                  r'''"""(?<![А-Яа-яЁё0-9_])(в|на)\s+(\d{4})\s+(году)(?![А-Яа-яЁё0-9_])"""''',
+              ),
+              (
+                  r'''"""\b(с|до|после)\s+(\d{4})\s+(года)\b"""''',
+                  r'''"""(?<![А-Яа-яЁё0-9_])(с|до|после)\s+(\d{4})\s+(года)(?![А-Яа-яЁё0-9_])"""''',
+              ),
+              (
+                  r'''"""\b(в|на)\s+(\d{1,4})\s+(этаже|месте|уровне|пункте|разделе)\b"""''',
+                  r'''"""(?<![А-Яа-яЁё0-9_])(в|на)\s+(\d{1,4})\s+(этаже|месте|уровне|пункте|разделе)(?![А-Яа-яЁё0-9_])"""''',
+              ),
+              (
+                  r'''"""\b(в|на)\s+(\d{1,4})\s+(странице|главе|строке|части)\b"""''',
+                  r'''"""(?<![А-Яа-яЁё0-9_])(в|на)\s+(\d{1,4})\s+(странице|главе|строке|части)(?![А-Яа-яЁё0-9_])"""''',
+              ),
+              (
+                  r'''"""\b(около|возле|вокруг|без|до|из|от|у|для|после|кроме|к|ко|с|со|над|под|перед|между|о|об|обо|при)\s+(\d{1,6})(?:\s*(км|кг|см|мм|м|руб\.?|рубль|рубля|рублей|₽|%))?"""''',
+                  r'''"""(?<![А-Яа-яЁё0-9_])(около|возле|вокруг|без|до|из|от|у|для|после|кроме|к|ко|с|со|над|под|перед|между|о|об|обо|при)\s+(\d{1,6})(?:\s*(км|кг|см|мм|м|руб\.?|рубль|рубля|рублей|₽|%))?"""''',
+              ),
+          ]
+
+          for old, new in replacements:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'Expected exactly one occurrence, got {count}: {old}')
+              text = text.replace(old, new)
+
+          path.write_text(text)
+          PY
+
+          if ! git diff --quiet -- composeApp/src/commonMain/kotlin/com/nedmah/textlector/common/platform/tts/text/RussianNumberNormalizer.kt; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add composeApp/src/commonMain/kotlin/com/nedmah/textlector/common/platform/tts/text/RussianNumberNormalizer.kt
+            git commit -m 'fix: use Cyrillic-safe Russian number contexts'
+            git push origin HEAD:work/russian-number-agreement
+          fi
 
       - name: Set up Java 21
         uses: actions/setup-java@v4
