@@ -14,6 +14,7 @@ struct iOSApp: App {
         IosEngineHolder.shared.supertonicTts = supertonicEngine.tts
         IosEngineHolder.shared.pronunciationEnhancer = IosPronunciationEnhancer()
         IosEngineHolder.shared.remotePlaybackController = IosRemotePlaybackController()
+        IosEngineHolder.shared.diagnosticLogExporter = IosDiagnosticLogExporter()
         SupertonicHolder.shared.bridge = supertonicEngine.bridge
 
         IosEngineHolder.shared.tarExtractor = IosTarExtractor()
