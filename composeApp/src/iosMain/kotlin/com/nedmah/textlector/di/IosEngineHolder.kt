@@ -4,6 +4,7 @@ import com.nedmah.supertonic_kmp.api.SupertonicTts
 import com.nedmah.textlector.common.platform.file.FileDownloader
 import com.nedmah.textlector.common.platform.file.PdfPageExtractor
 import com.nedmah.textlector.common.platform.file.TarExtractor
+import com.nedmah.textlector.common.platform.logging.DiagnosticLogExporter
 import com.nedmah.textlector.common.platform.ocr.OcrEngine
 import com.nedmah.textlector.common.platform.tts.RemotePlaybackController
 import com.nedmah.textlector.common.platform.tts.SherpaOnnxTtsEngine
@@ -15,6 +16,7 @@ object IosEngineHolder {
     var supertonicTts: SupertonicTts? = null
     var pronunciationEnhancer: NativePronunciationEnhancer? = null
     var remotePlaybackController: RemotePlaybackController? = null
+    var diagnosticLogExporter: DiagnosticLogExporter? = null
     var tarExtractor: TarExtractor? = null
     var fileDownloader : FileDownloader? = null
     var pdfExtractor: PdfPageExtractor? = null
