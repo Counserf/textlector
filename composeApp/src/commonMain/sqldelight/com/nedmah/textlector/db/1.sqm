@@ -1,0 +1,1 @@
+ALTER TABLE paragraph ADD COLUMN tts_text TEXT;
