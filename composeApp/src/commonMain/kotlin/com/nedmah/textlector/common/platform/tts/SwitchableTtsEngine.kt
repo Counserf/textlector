@@ -1,6 +1,7 @@
 package com.nedmah.textlector.common.platform.tts
 
 import com.nedmah.textlector.common.platform.logging.CrashReporter
+import com.nedmah.textlector.common.platform.tts.text.NeuralTextPreprocessor
 import com.nedmah.textlector.domain.model.Paragraph
 import com.nedmah.textlector.domain.model.TtsEngineType
 import com.nedmah.textlector.domain.model.UserPreferences
@@ -29,16 +30,9 @@ private fun log(message: String) {
 /**
  * Single entry point for TTS in the app.
  *
- * Switches between three engines depending on [UserPreferences.engineType]:
- * - [TtsEngineType.SYSTEM] — Android system TTS, no buffering
- * - [TtsEngineType.PIPER] — offline VITS via sherpa-onnx, with [TtsQueue]
- * - [TtsEngineType.SUPERTONIC] — offline neural TTS via supertonic-kmp, with [TtsQueue]
- *
- * Both ONNX engines implement [SherpaOnnxTtsEngine] and work through the same
- * [TtsQueue] — prefetches the next paragraph while the current one is playing.
- *
- * Switching occurs reactively by subscribing to [PreferencesRepository.getPreferences].
- * When the engine changes, [engineChanged] is emitted — [com.nedmah.textlector.ui.presentation.player.PlayerViewModel] restarts playback.
+ * Piper and Supertonic share one language-aware pronunciation preprocessing
+ * layer. The original paragraph remains untouched; only the text supplied to
+ * neural generation gets number expansion and stress/homograph hints.
  */
 class SwitchableTtsEngine(
     private val nativeEngine: TtsEngine,
@@ -55,13 +49,18 @@ class SwitchableTtsEngine(
 
     @Volatile
     private var active: TtsEngine = nativeEngine
+
+    @Volatile
+    private var currentLanguage: String = "ru"
+
+    private var currentVoiceKey: String? = null
     private var ttsQueue: TtsQueue? = null
     private var paragraphs: List<Paragraph> = emptyList()
+    private val neuralTextPreprocessor = NeuralTextPreprocessor()
 
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     init {
-
         scope.launch(Dispatchers.IO) {
             preferencesRepository.getPreferences().collect { prefs ->
                 handleEngineSwitch(prefs)
@@ -69,10 +68,6 @@ class SwitchableTtsEngine(
         }
     }
 
-    /**
-     * Delegates only to the active engine if it is a [SherpaOnnxTtsEngine].
-     * Called from [com.nedmah.textlector.ui.presentation.settings.SettingsViewModel] after the model has loaded.
-     */
     override suspend fun loadVoice(model: VoiceModel) {
         log("loadVoice: ${model.id}")
         (active as? SherpaOnnxTtsEngine)?.loadVoice(model)
@@ -86,13 +81,6 @@ class SwitchableTtsEngine(
         supertonicEngine.setPlaylist(paragraphs)
     }
 
-    /**
-     * Plays paragraph [index].
-     *
-     * If the ONNX engine is active, it takes audio from the [TtsQueue] (cache or generated),
-     * then runs a prefetch of the next paragraph in the background.
-     * If the SYSTEM engine is active, it delegates directly without buffering.
-     */
     override suspend fun speak(index: Int, speed: Float) {
         val queue = ttsQueue
         log("speak: index=$index, speed=$speed, queue=${when {
@@ -140,7 +128,6 @@ class SwitchableTtsEngine(
         }}")
         ttsQueue?.clear()
         active.stop()
-        // don't emit buffering false here because it interrupts, pause() in playerVM already cancels loading
     }
 
     override fun shutdown() {
@@ -152,19 +139,46 @@ class SwitchableTtsEngine(
         supertonicEngine.shutdown()
     }
 
-    private suspend fun handleEngineSwitch(prefs : UserPreferences) {
-        val targetEngine = when(prefs.engineType){
+    private fun createNeuralQueue(engine: SherpaOnnxTtsEngine): TtsQueue =
+        TtsQueue(
+            engine = engine,
+            preprocess = { rawText ->
+                val prepared = neuralTextPreprocessor.process(rawText, currentLanguage)
+                if (prepared != rawText) {
+                    log("pronunciation preprocessor changed ${rawText.length} chars -> ${prepared.length} chars")
+                }
+                prepared
+            }
+        )
+
+    private suspend fun handleEngineSwitch(prefs: UserPreferences) {
+        val previousLanguage = currentLanguage
+        currentLanguage = prefs.language
+
+        val targetEngine = when (prefs.engineType) {
             TtsEngineType.SYSTEM -> nativeEngine
             TtsEngineType.PIPER -> sherpaEngine
             TtsEngineType.SUPERTONIC -> supertonicEngine
         }
 
-        // if voice or language was changed
+        val resolvedVoice = prefs.resolveVoiceId()
+        val voiceKey = resolvedVoice.name
+        val languageChanged = previousLanguage != currentLanguage
+        val voiceChanged = currentVoiceKey != voiceKey
+
+        // Same engine, but language/voice changes must invalidate prefetched audio.
         if (active === targetEngine) {
-            if (targetEngine is SherpaOnnxTtsEngine) {  // supertonic implements SherpaOnnxTtsEngine too
-                val model = VoiceRegistry.getById(prefs.resolveVoiceId())
-                targetEngine.loadVoice(model)
-                if (ttsQueue == null) ttsQueue = TtsQueue(targetEngine)
+            if (targetEngine is SherpaOnnxTtsEngine) {
+                if (voiceChanged) {
+                    targetEngine.loadVoice(VoiceRegistry.getById(resolvedVoice))
+                }
+                if (ttsQueue == null || languageChanged || voiceChanged) {
+                    ttsQueue?.shutdown()
+                    ttsQueue = createNeuralQueue(targetEngine)
+                }
+                currentVoiceKey = voiceKey
+            } else {
+                currentVoiceKey = null
             }
             return
         }
@@ -174,13 +188,15 @@ class SwitchableTtsEngine(
         active = targetEngine
 
         if (targetEngine is SherpaOnnxTtsEngine) {
-            val model = VoiceRegistry.getById(prefs.resolveVoiceId())
+            val model = VoiceRegistry.getById(resolvedVoice)
             targetEngine.loadVoice(model)
             ttsQueue?.shutdown()
-            ttsQueue = TtsQueue(targetEngine)
+            ttsQueue = createNeuralQueue(targetEngine)
+            currentVoiceKey = voiceKey
         } else {
             ttsQueue?.shutdown()
             ttsQueue = null
+            currentVoiceKey = null
         }
 
         CrashReporter.log("Engine switched to ${prefs.engineType}", tag = "SwitchableTtsEngine")
