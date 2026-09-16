@@ -165,7 +165,6 @@ jobs:
           rm -rf /tmp/supertonic-kmp
           git clone --depth 1 https://github.com/nedmah/supertonic-kmp.git /tmp/supertonic-kmp
 
-          # Current supertonic-kmp keeps voice styles here. Keep a fallback for older layouts.
           RESOURCE_DIR="/tmp/supertonic-kmp/core/src/commonMain/resources/supertonic"
           if [ ! -d "$RESOURCE_DIR" ]; then
             RESOURCE_DIR="$(find /tmp/supertonic-kmp -type d -path '*/composeResources/files/supertonic' -print -quit || true)"
@@ -179,7 +178,6 @@ jobs:
           rm -rf "$APP_PATH/supertonic"
           cp -R "$RESOURCE_DIR" "$APP_PATH/supertonic"
 
-          # Fail the build instead of producing a broken IPA with silently missing voices.
           test -f "$APP_PATH/supertonic/voice_styles/M1.json"
           test -f "$APP_PATH/supertonic/voice_styles/F1.json"
           echo "Bundled Supertonic resources from $RESOURCE_DIR"
@@ -195,8 +193,6 @@ jobs:
           DEST="$APP_PATH/pronunciation/ru"
           mkdir -p "$DEST"
 
-          # Pin to the RUAccent dictionary revision used by the app. Checksums
-          # protect the IPA from silently receiving different pronunciation data.
           BASE='https://huggingface.co/ruaccent/accentuator/resolve/153c03b8429853c850b1b2c50f57dd28a3c864e7/dictionary'
 
           fetch_dictionary() {
@@ -219,6 +215,26 @@ jobs:
           echo 'Bundled Russian pronunciation dictionaries:'
           ls -lh "$DEST"
 
+      - name: Bundle RUAccent tiny2.1 homograph model
+        shell: bash
+        run: |
+          set -euxo pipefail
+          APP_PATH="$(find "$GITHUB_WORKSPACE/build/DerivedData/Build/Products/Release-iphoneos" -maxdepth 1 -name '*.app' -print -quit)"
+          test -n "$APP_PATH"
+
+          DEST="$APP_PATH/pronunciation/ru/homograph/tiny2.1"
+          mkdir -p "$DEST"
+          BASE='https://huggingface.co/ruaccent/accentuator/resolve/c3970fdf3e3b4b6baeb0b42f38a411abb2b4adfb/nn/nn_omograph/tiny2.1'
+
+          for name in model.onnx vocab.txt added_tokens.json tokenizer_config.json config.json special_tokens_map.json tokenizer.json; do
+            curl -L --fail --retry 3 --retry-delay 2 "$BASE/$name" -o "$DEST/$name"
+            test -s "$DEST/$name"
+          done
+
+          echo '2f60ac3391b6ac2500792dc9125414c95767b6b3c49adb8472b7ab6574fe84e8' " $DEST/model.onnx" | shasum -a 256 -c -
+          echo 'Bundled RUAccent tiny2.1:'
+          ls -lh "$DEST"
+
       - name: Package unsigned IPA
         shell: bash
         run: |
@@ -229,9 +245,10 @@ jobs:
           mkdir Payload
           cp -R "$APP_PATH" Payload/
           /usr/bin/zip -qry TextLector-unsigned.ipa Payload
-          unzip -l TextLector-unsigned.ipa | sed -n '1,160p'
+          unzip -l TextLector-unsigned.ipa | sed -n '1,180p'
           unzip -l TextLector-unsigned.ipa | grep -E 'supertonic/voice_styles/(M1|F1)\.json'
           unzip -l TextLector-unsigned.ipa | grep -E 'pronunciation/ru/(accents_nn|omographs|yo_words|yo_homographs)\.json'
+          unzip -l TextLector-unsigned.ipa | grep -E 'pronunciation/ru/homograph/tiny2\.1/(model\.onnx|vocab\.txt|added_tokens\.json|tokenizer_config\.json)'
           if codesign -dv "$APP_PATH" >/dev/null 2>&1; then
             echo 'WARNING: app bundle contains a code signature.'
           else
