@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nedmah.textlector.common.platform.logging.CrashReporter
 import com.nedmah.textlector.common.platform.logging.TtsDiagnosticLog
+import com.nedmah.textlector.common.platform.tts.BookProcessingCoordinator
 import com.nedmah.textlector.common.platform.tts.RemotePlaybackController
 import com.nedmah.textlector.common.platform.tts.RemotePlaybackHandler
 import com.nedmah.textlector.common.platform.tts.TtsEngine
@@ -42,6 +43,7 @@ class PlayerViewModel(
     private val ttsEngine: TtsEngine,
     private val isBufferingFlow: Flow<Boolean>,
     private val remotePlaybackController: RemotePlaybackController,
+    private val bookProcessingCoordinator: BookProcessingCoordinator,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(PlayerState())
@@ -178,26 +180,50 @@ class PlayerViewModel(
     }
 
     private fun play() {
-        if (!_state.value.isLoaded) {
+        val snapshot = _state.value
+        if (!snapshot.isLoaded) {
             playerLog("play aborted: not loaded")
             return
         }
-        if (_state.value.isLoading) {
+        if (snapshot.isLoading) {
             playerLog("play aborted: loading")
             return
         }
 
-        val currentIndex = _state.value.currentParagraphIndex
-        playerLog("play index=$currentIndex speed=${_state.value.playbackSpeed} model=${_state.value.activeModelLabel}")
+        val currentIndex = snapshot.currentParagraphIndex
+        val documentId = snapshot.document?.id ?: return
+        val neuralEngine = snapshot.engineType != TtsEngineType.SYSTEM
+        playerLog("play index=$currentIndex speed=${snapshot.playbackSpeed} model=${snapshot.activeModelLabel}")
         CrashReporter.log("play: index=$currentIndex", tag = "PlayerViewModel")
 
         val utteranceId = ++currentUtteranceId
         playbackJob?.cancel()
         ttsEngine.stop()
-        _state.update { it.copy(isPlaying = true, errorMessage = null) }
+        _state.update {
+            it.copy(
+                isPlaying = true,
+                isBuffering = neuralEngine && it.paragraphs.getOrNull(currentIndex)?.ttsText == null,
+                errorMessage = null
+            )
+        }
 
         playbackJob = viewModelScope.launch {
             try {
+                if (neuralEngine && _state.value.paragraphs.getOrNull(currentIndex)?.ttsText == null) {
+                    playerLog("play waiting for markup index=$currentIndex")
+                    val preparedParagraph = bookProcessingCoordinator.awaitPreparedParagraph(documentId, currentIndex)
+                    if (utteranceId != currentUtteranceId) return@launch
+
+                    // Do not wait for the independent DB collector to win a race with
+                    // playback. Inject the just-prepared paragraph into both states now.
+                    val latest = _state.value.paragraphs.toMutableList()
+                    if (currentIndex !in latest.indices) error("Отрывок ${currentIndex + 1} не найден")
+                    latest[currentIndex] = preparedParagraph
+                    ttsEngine.setPlaylist(latest)
+                    _state.update { it.copy(paragraphs = latest, isBuffering = false) }
+                    playerLog("play markup ready index=$currentIndex chars=${preparedParagraph.ttsText?.length ?: 0}")
+                }
+
                 ttsEngine.speak(currentIndex, _state.value.playbackSpeed)
             } catch (e: Exception) {
                 if (e is CancellationException) {
