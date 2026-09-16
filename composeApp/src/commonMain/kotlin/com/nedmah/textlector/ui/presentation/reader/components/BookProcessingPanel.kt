@@ -33,6 +33,7 @@ fun BookProcessingPanel(
 ) {
     if (state.totalParagraphs <= 0) return
     var copied by remember { mutableStateOf(false) }
+    var exportFailed by remember { mutableStateOf(false) }
 
     Surface(
         modifier = modifier.fillMaxWidth(),
@@ -79,6 +80,20 @@ fun BookProcessingPanel(
                 Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
             }
 
+            Button(
+                onClick = { exportFailed = !TtsDiagnosticLog.export() },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Экспортировать логи")
+            }
+            if (exportFailed) {
+                Text(
+                    "Не удалось открыть экспорт. Можно скопировать лог ниже.",
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 TextButton(onClick = { copied = TtsDiagnosticLog.copyToClipboard() }) {
                     Text(if (copied) "Лог скопирован" else "Скопировать TTS-лог")
@@ -86,6 +101,7 @@ fun BookProcessingPanel(
                 TextButton(onClick = {
                     TtsDiagnosticLog.clear()
                     copied = false
+                    exportFailed = false
                 }) {
                     Text("Очистить лог")
                 }
