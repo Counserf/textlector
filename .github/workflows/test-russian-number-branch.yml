@@ -1,0 +1,39 @@
+name: Test Russian number normalization branch
+
+on:
+  push:
+    branches:
+      - work/russian-number-agreement
+    paths:
+      - 'composeApp/src/commonMain/kotlin/com/nedmah/textlector/common/platform/tts/text/**'
+      - 'composeApp/src/commonTest/kotlin/com/nedmah/textlector/RussianTtsPreprocessorTest.kt'
+      - '.github/workflows/test-russian-number-branch.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Run Russian TTS preprocessor tests
+        shell: bash
+        run: |
+          set -euxo pipefail
+          chmod +x ./gradlew
+          cat > local.properties <<'EOF'
+          KEYSTORE_PASSWORD=ci-placeholder
+          KEY_PASSWORD=ci-placeholder
+          EOF
+          ./gradlew :composeApp:jvmTest --tests 'com.nedmah.textlector.RussianTtsPreprocessorTest' --stacktrace
