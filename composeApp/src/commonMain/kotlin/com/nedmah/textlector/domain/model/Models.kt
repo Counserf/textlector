@@ -28,6 +28,7 @@ data class Paragraph(
     val documentId : String,
     val index : Int,
     val text : String,
+    val ttsText: String? = null,
 )
 
 sealed class SourceType{
@@ -66,5 +67,4 @@ data class UserPreferences(
 }
 
 enum class VoiceGender { MALE, FEMALE}
-
 enum class TtsEngineType { SYSTEM, PIPER, SUPERTONIC }
