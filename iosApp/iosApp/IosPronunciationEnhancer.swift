@@ -13,8 +13,13 @@ import ComposeApp
 
         diag("enhance START chars=\(text.count)")
         return autoreleasepool {
+            diag("homograph START")
             let contextual = RussianHomographResolver.shared.process(text)
+            diag("homograph END chars=\(contextual.count)")
+
+            diag("dictionary START")
             let prepared = RussianPronunciationDictionary.shared.process(contextual)
+            diag("dictionary END chars=\(prepared.count)")
             diag("enhance END chars=\(prepared.count)")
             return prepared
         }
