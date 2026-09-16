@@ -11,4 +11,5 @@ actual object TtsDiagnosticLog {
     actual fun read(): String = lines.joinToString("\n").ifBlank { "TTS log is empty" }
     actual fun clear() = lines.clear()
     actual fun copyToClipboard(): Boolean = false
+    actual fun export(): Boolean = false
 }
