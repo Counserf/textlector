@@ -27,30 +27,39 @@ import ComposeApp
         ))
     }()
 
+    private func diag(_ message: String) {
+        TtsDiagnosticLog.shared.append(tag: "SupertonicNative", message: message)
+    }
+
     func loadVoice(model: VoiceModel) async throws {
         currentLang = model.language
         currentVoice = model.gender == VoiceGender.male ? "M1" : "F1"
+        diag("loadVoice START voice=\(currentVoice) lang=\(currentLang)")
 
         let docsDir = NSSearchPathForDirectoriesInDomains(.documentDirectory, .userDomainMask, true).first!
         let storageDir = docsDir + "/supertonic"
-        print("[IosSupertonicEngine] loading bridge from: \(storageDir)")
         bridge.load(storageDir: storageDir)
-        print("[IosSupertonicEngine] bridge.isLoaded: \(bridge.isLoaded)")
+        diag("loadVoice END loaded=\(bridge.isLoaded)")
     }
 
     func setPlaylist(paragraphs: [LectorParagraph]) {
         self.paragraphs = paragraphs
+        diag("setPlaylist count=\(paragraphs.count)")
     }
 
     func speak(index: Int32, speed: Float) async throws {
         guard index >= 0, Int(index) < paragraphs.count else { return }
         let paragraph = paragraphs[Int(index)]
+        diag("speak START index=\(index) prepared=\(paragraph.ttsText != nil)")
         let audio = try await generate(text: paragraph.ttsText ?? paragraph.text, speed: speed)
         try await playAudio(audio: audio)
+        diag("speak END index=\(index)")
     }
 
     func generate(text: String, speed: Float) async throws -> KotlinByteArray {
+        diag("generate START chars=\(text.count) voice=\(currentVoice) lang=\(currentLang) speed=\(speed)")
         guard bridge.isLoaded else {
+            diag("generate ABORT bridge not loaded")
             throw makeError(
                 "Supertonic не загрузил ONNX-модели. Ожидаемый каталог: Documents/supertonic. " +
                 "Удалите модель Supertonic в настройках и скачайте её заново."
@@ -59,11 +68,10 @@ import ComposeApp
 
         let styleJson = loadVoiceStyle(currentVoice)
         guard styleJson != "{}" else {
+            diag("generate ABORT voice style missing")
             throw makeError("Не найден стиль голоса Supertonic \(currentVoice).json в bundle приложения.")
         }
 
-        // Pronunciation/RUAccent work is performed by the background book worker.
-        // Playback consumes prepared text and never loads the heavy dictionaries/classifier.
         guard let data = bridge.generate(
             text: text,
             lang: currentLang,
@@ -71,30 +79,38 @@ import ComposeApp
             speed: speed,
             steps: 8
         ) else {
+            diag("generate END nil")
             throw makeError(
                 "Supertonic не смог сгенерировать аудио. Модель: Supertonic v3 / \(currentVoice), язык: \(currentLang)."
             )
         }
 
         guard !data.isEmpty else {
+            diag("generate END empty")
             throw makeError("Supertonic вернул пустой WAV-файл.")
         }
+        diag("generate END bytes=\(data.count)")
         return data.toKotlinByteArray()
     }
 
     func playAudio(audio: KotlinByteArray) async throws {
         guard audio.size > 0 else {
+            diag("play ABORT empty")
             throw makeError("Supertonic: попытка воспроизвести пустой аудиобуфер.")
         }
+        diag("play START bytes=\(audio.size)")
         bridge.playWav(data: audio.toData())
+        diag("play END")
     }
 
     func stop() {
+        diag("stop")
         bridge.cancel()
         bridge.stopPlayback()
     }
 
     func shutdown() {
+        diag("shutdown")
         bridge.cancel()
         bridge.close()
     }
