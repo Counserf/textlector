@@ -232,7 +232,7 @@ jobs:
           echo 'Bundled mmap RUAccent dictionaries:'
           ls -lh "$DEST"/*.rapack
 
-      - name: Bundle quantized RUAccent tiny2.1 homograph model
+      - name: Bundle RUAccent tiny2.1 homograph model
         shell: bash
         run: |
           set -euxo pipefail
@@ -252,7 +252,28 @@ jobs:
             test -s "$DEST/$name"
           done
 
+          # Keep a verified FP32 model in the bundle first. The app already prefers
+          # model.int8.onnx when present and transparently falls back to model.onnx.
+          cp "$SOURCE_MODEL" "$DEST/model.onnx"
+          test -s "$DEST/model.onnx"
+
           python3 -m pip install --quiet --disable-pip-version-check 'onnxruntime==1.24.2' onnx
+
+          FP32_MODEL="$DEST/model.onnx" python3 - <<'PY'
+          import os
+          import numpy as np
+          import onnxruntime as ort
+
+          model = os.environ['FP32_MODEL']
+          session = ort.InferenceSession(model, providers=['CPUExecutionProvider'])
+          inputs = {item.name: np.ones((1, 8), dtype=np.int64) for item in session.get_inputs()}
+          outputs = session.run(None, inputs)
+          if not outputs or outputs[0].shape[-1] != 2 or not np.isfinite(outputs[0]).all():
+              raise SystemExit(f'Invalid FP32 model output: {[getattr(x, "shape", None) for x in outputs]}')
+          print('FP32 tiny2.1 smoke test OK:', outputs[0].shape)
+          PY
+
+          set +e
           SOURCE_MODEL="$SOURCE_MODEL" DEST_MODEL="$DEST/model.int8.onnx" python3 - <<'PY'
           import os
           import numpy as np
@@ -283,10 +304,20 @@ jobs:
               raise SystemExit(f'Invalid quantized model output: {[getattr(x, "shape", None) for x in outputs]}')
           print('Quantized tiny2.1 smoke test OK:', outputs[0].shape)
           PY
+          QUANTIZE_STATUS=$?
+          set -e
 
-          test -s "$DEST/model.int8.onnx"
+          if [ "$QUANTIZE_STATUS" -eq 0 ] && [ -s "$DEST/model.int8.onnx" ]; then
+            rm -f "$DEST/model.onnx"
+            echo 'Bundled RUAccent tiny2.1 INT8 model.'
+          else
+            rm -f "$DEST/model.int8.onnx"
+            echo '::warning::RUAccent tiny2.1 INT8 quantization failed; bundling verified FP32 model instead.'
+            test -s "$DEST/model.onnx"
+          fi
+
           rm -f "$SOURCE_MODEL"
-          echo 'Bundled RUAccent tiny2.1 INT8:'
+          echo 'Bundled RUAccent tiny2.1 resources:'
           ls -lh "$DEST"
 
       - name: Package unsigned IPA
@@ -302,7 +333,8 @@ jobs:
           unzip -l TextLector-unsigned.ipa | sed -n '1,180p'
           unzip -l TextLector-unsigned.ipa | grep -E 'supertonic/voice_styles/(M1|F1)\.json'
           unzip -l TextLector-unsigned.ipa | grep -E 'pronunciation/ru/(accents_nn|omographs|yo_words|yo_homographs)\.rapack'
-          unzip -l TextLector-unsigned.ipa | grep -E 'pronunciation/ru/homograph/tiny2\.1/(model\.int8\.onnx|vocab\.txt|added_tokens\.json|tokenizer_config\.json)'
+          unzip -l TextLector-unsigned.ipa | grep -E 'pronunciation/ru/homograph/tiny2\.1/(model\.int8\.onnx|model\.onnx|vocab\.txt|added_tokens\.json|tokenizer_config\.json)'
+          unzip -l TextLector-unsigned.ipa | grep -E 'pronunciation/ru/homograph/tiny2\.1/model\.(int8\.)?onnx'
           if codesign -dv "$APP_PATH" >/dev/null 2>&1; then
             echo 'WARNING: app bundle contains a code signature.'
           else
