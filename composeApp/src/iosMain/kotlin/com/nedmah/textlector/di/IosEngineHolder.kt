@@ -6,11 +6,13 @@ import com.nedmah.textlector.common.platform.file.PdfPageExtractor
 import com.nedmah.textlector.common.platform.file.TarExtractor
 import com.nedmah.textlector.common.platform.ocr.OcrEngine
 import com.nedmah.textlector.common.platform.tts.SherpaOnnxTtsEngine
+import com.nedmah.textlector.common.platform.tts.text.NativePronunciationEnhancer
 
 object IosEngineHolder {
     var sherpaEngine: SherpaOnnxTtsEngine? = null
     var supertonicEngine: SherpaOnnxTtsEngine? = null
     var supertonicTts: SupertonicTts? = null
+    var pronunciationEnhancer: NativePronunciationEnhancer? = null
     var tarExtractor: TarExtractor? = null
     var fileDownloader : FileDownloader? = null
     var pdfExtractor: PdfPageExtractor? = null
