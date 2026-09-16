@@ -29,10 +29,18 @@ class ParagraphRepositoryImpl(
                             id = pg.id,
                             document_id = pg.documentId,
                             index_in_doc = pg.index.toLong(),
-                            text = pg.text
+                            text = pg.text,
+                            tts_text = pg.ttsText
                         )
                     }
                 }
+            }
+        }
+
+    override suspend fun updateTtsText(paragraphId: String, ttsText: String): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                queries.updateTtsText(ttsText = ttsText, paragraphId = paragraphId)
             }
         }
 
