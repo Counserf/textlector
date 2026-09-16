@@ -2,7 +2,6 @@ package com.nedmah.textlector.common.platform.tts
 
 import com.nedmah.textlector.common.platform.logging.CrashReporter
 import com.nedmah.textlector.common.platform.logging.TtsDiagnosticLog
-import com.nedmah.textlector.common.platform.tts.text.NeuralTextPreprocessor
 import com.nedmah.textlector.domain.model.Paragraph
 import com.nedmah.textlector.domain.model.TtsEngineType
 import com.nedmah.textlector.domain.model.UserPreferences
@@ -53,7 +52,6 @@ class SwitchableTtsEngine(
     private var currentEngineType: TtsEngineType = TtsEngineType.SYSTEM
     private var ttsQueue: TtsQueue? = null
     private var paragraphs: List<Paragraph> = emptyList()
-    private val fallbackPreprocessor = NeuralTextPreprocessor()
     private val voiceLoadMutex = Mutex()
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
@@ -84,13 +82,23 @@ class SwitchableTtsEngine(
 
         if (queue != null) {
             if (index !in paragraphs.indices) return
+            val paragraph = paragraphs[index]
+
+            // This check intentionally happens BEFORE loading Piper/Supertonic.
+            // RUAccent can still be marking the book; loading both ONNX stacks at
+            // once caused the memory spike that originally crashed iOS playback.
+            if (paragraph.ttsText == null) {
+                log("speak blocked: paragraph=$index pronunciation markup not ready")
+                error("Отрывок ${index + 1} ещё не прошёл разметку произношения")
+            }
+
             ensureNeuralVoiceLoaded()
 
             val cached = queue.getCachedAudio(index)
             if (cached == null) _isBuffering.emit(true)
 
             val audio = try {
-                queue.getAudio(index, paragraphs[index], speed)
+                queue.getAudio(index, paragraph, speed)
             } catch (e: Exception) {
                 withContext(NonCancellable) { _isBuffering.emit(false) }
                 throw e
@@ -107,6 +115,10 @@ class SwitchableTtsEngine(
 
     suspend fun preGenerateParagraph(paragraph: Paragraph, speed: Float): Boolean {
         val queue = ttsQueue ?: return false
+        if (paragraph.ttsText == null) {
+            log("preGenerate blocked: paragraph=${paragraph.index} pronunciation markup not ready")
+            return false
+        }
         ensureNeuralVoiceLoaded()
         return queue.preGenerate(paragraph, speed)
     }
@@ -153,8 +165,7 @@ class SwitchableTtsEngine(
         val namespace = "${engineKey}_${currentVoiceKey ?: "voice"}_${currentLanguage}"
         return TtsQueue(
             engine = engine,
-            cacheNamespace = namespace,
-            preprocess = { rawText -> fallbackPreprocessor.process(rawText, currentLanguage) }
+            cacheNamespace = namespace
         )
     }
 
