@@ -4,10 +4,10 @@ import OnnxRuntimeBindings
 /// Context-aware Russian homograph resolver used only for words that cannot be
 /// pronounced safely from a dictionary alone (за́мок/замо́к, а́тлас/атла́с, etc.).
 ///
-/// The model is the compact RUAccent tiny2.1 ONNX classifier. It is loaded lazily:
-/// ordinary paragraphs never pay its memory/inference cost. If the model is absent
-/// or inference is uncertain, the source word is left unchanged and downstream
-/// deterministic pronunciation rules remain the fallback.
+/// This mirrors RUAccent's tiny2.1 omograph path: mark the target as <w>word</w>,
+/// score each stressed hypothesis as the second tokenizer sequence and choose the
+/// highest-probability variant. The model is loaded lazily and explicitly released
+/// when background book markup finishes so it does not overlap with the TTS model.
 final class RussianHomographResolver {
     static let shared = RussianHomographResolver()
 
@@ -16,9 +16,6 @@ final class RussianHomographResolver {
         let replacement: String
     }
 
-    /// TTS prefetch can ask for two paragraphs concurrently. Keep a single ORT
-    /// session and serialize its tiny classification calls instead of duplicating
-    /// the model in memory.
     private let lock = NSLock()
     private var candidatesByWord: [String: [String]]?
     private var env: ORTEnv?
@@ -26,17 +23,26 @@ final class RussianHomographResolver {
     private var tokenizer: BertWordPieceTokenizer?
     private var attemptedModelLoad = false
 
-    /// Conservative thresholds: the classifier must both believe the winning
-    /// hypothesis and separate it from the runner-up. Otherwise we do not guess.
-    private let minimumProbability: Float = 0.60
-    private let minimumMargin: Float = 0.08
-
     private init() {}
 
     func process(_ text: String) -> String {
         lock.lock()
         defer { lock.unlock() }
         return processLocked(text)
+    }
+
+    /// Frees the ~40 MB tiny2.1 session and tokenizer after book markup. The next
+    /// book can load them again lazily. This is deliberately serialized with
+    /// process() so resources are never released during inference.
+    func releaseResources() {
+        lock.lock()
+        session = nil
+        tokenizer = nil
+        env = nil
+        candidatesByWord = nil
+        attemptedModelLoad = false
+        lock.unlock()
+        print("[RussianHomographResolver] resources released")
     }
 
     private func processLocked(_ text: String) -> String {
@@ -48,8 +54,7 @@ final class RussianHomographResolver {
         let regex = try! NSRegularExpression(pattern: "[А-Яа-яЁё\\u{0301}]+")
         let matches = regex.matches(in: text, range: fullRange)
 
-        // First determine whether neural inference is needed at all. This keeps
-        // the ~40 MB model cold for the vast majority of paragraphs.
+        // Determine whether neural inference is needed before loading the model.
         let unresolved = matches.filter { match in
             let word = nsText.substring(with: match.range)
             guard !word.contains("\u{0301}") else { return false }
@@ -58,7 +63,7 @@ final class RussianHomographResolver {
         guard !unresolved.isEmpty else { return text }
 
         guard ensureModelLoaded(), let session, let tokenizer else {
-            print("[RussianHomographResolver] model unavailable; using rule/dictionary fallback")
+            print("[RussianHomographResolver] model unavailable; using dictionary fallback")
             return text
         }
 
@@ -70,6 +75,8 @@ final class RussianHomographResolver {
             let key = source.lowercased()
             guard let hypotheses = dictionary[key], hypotheses.count > 1 else { continue }
 
+            // RUAccent wraps the target word in <w>...</w> before passing the
+            // sentence/context as tokenizer sequence A and each hypothesis as B.
             let context = markedContext(text: text, targetRange: match.range, target: source)
             var scored: [(String, Float)] = []
             scored.reserveCapacity(hypotheses.count)
@@ -89,18 +96,10 @@ final class RussianHomographResolver {
                 }
             }
 
-            let sorted = scored.sorted { $0.1 > $1.1 }
-            guard let winner = sorted.first else { continue }
-            let runnerUp = sorted.dropFirst().first?.1 ?? 0
-            let margin = winner.1 - runnerUp
-
-            guard winner.1 >= minimumProbability, margin >= minimumMargin else {
-                print(
-                    "[RussianHomographResolver] uncertain '\(source)': " +
-                    "p=\(winner.1), margin=\(margin); leaving unchanged"
-                )
-                continue
-            }
+            // Match RUAccent OmographModel.classify(): choose the maximum score.
+            // Do not impose a second, app-specific confidence threshold.
+            guard let winner = scored.max(by: { $0.1 < $1.1 }) else { continue }
+            print("[RussianHomographResolver] resolved '\(source)' -> '\(winner.0)' p=\(winner.1)")
 
             let accented = Self.preserveCase(
                 source: source,
@@ -205,15 +204,19 @@ final class RussianHomographResolver {
         let marked = NSMutableString(string: text)
         marked.replaceCharacters(in: targetRange, with: "<w>\(target)</w>")
 
-        // RUAccent accepts up to 512 model tokens. Paragraphs can be much longer,
-        // so keep a generous character window centered on the target before the
-        // tokenizer performs exact token-level truncation.
+        // The original library works sentence-by-sentence. Paragraphs in TextLector
+        // can be long, so keep a target-centred window before exact token truncation.
         let markerLocation = targetRange.location
         let radius = 900
         let start = max(0, markerLocation - radius)
         let end = min(marked.length, markerLocation + targetRange.length + radius + 7)
         let safeRange = NSRange(location: start, length: max(0, end - start))
-        return marked.substring(with: safeRange)
+        let context = marked.substring(with: safeRange)
+
+        // Mirrors RUAccent's cleanup immediately before tokenizer invocation.
+        let regex = try? NSRegularExpression(pattern: "\\s+(?=[,.?!:;…])")
+        let full = NSRange(location: 0, length: (context as NSString).length)
+        return regex?.stringByReplacingMatches(in: context, range: full, withTemplate: "") ?? context
     }
 
     private func positiveProbability(
@@ -225,6 +228,8 @@ final class RussianHomographResolver {
         let idsTensor = try Self.makeInt64Tensor(inputIds, shape: shape)
         let maskTensor = try Self.makeInt64Tensor(attentionMask, shape: shape)
 
+        // tiny2.1 is DistilBERT, so it uses input_ids + attention_mask and no
+        // token_type_ids. The exported classifier output is named "logits".
         let outputs = try session.run(
             withInputs: [
                 "input_ids": idsTensor,
@@ -289,7 +294,7 @@ final class RussianHomographResolver {
 }
 
 /// Minimal BERT BasicTokenizer + WordPiece implementation for RUAccent tiny2.1.
-/// Keeping this local avoids adding a second tokenizer framework to the app.
+/// Keeping this local avoids adding another tokenizer framework to the app.
 private struct BertWordPieceTokenizer {
     struct EncodedPair {
         let inputIds: [Int64]
@@ -391,8 +396,8 @@ private struct BertWordPieceTokenizer {
         var normalized = input
         if doLowerCase {
             normalized = normalized.lowercased()
-            // Mirrors BertTokenizer's default strip_accents behavior when
-            // do_lower_case=true. This also maps ё to е, matching training.
+            // BertTokenizer with do_lower_case=true and strip_accents=null strips
+            // combining accents as part of lower-case normalization.
             normalized = normalized.folding(
                 options: [.diacriticInsensitive],
                 locale: Locale(identifier: "ru_RU")
