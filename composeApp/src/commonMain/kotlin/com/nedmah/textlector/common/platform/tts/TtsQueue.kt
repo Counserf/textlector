@@ -21,7 +21,7 @@ import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 
 private const val TTS_QUEUE_LOGS = true
-private const val AUDIO_CACHE_PIPELINE_VERSION = 4
+private const val AUDIO_CACHE_PIPELINE_VERSION = 5
 
 private fun ttsLog(message: String) {
     if (TTS_QUEUE_LOGS) println("[TtsQueue ${Clock.System.now().toEpochMilliseconds() % 100_000}ms] $message")
@@ -55,8 +55,6 @@ class TtsQueue(
                 val paragraph = paragraphs[i]
                 val preparedText = paragraph.ttsText
                 if (preparedText == null) {
-                    // Markup runs independently and will update the playlist via DB flow.
-                    // Never synthesize raw text here: that would persist a bad WAV.
                     ttsLog("paragraph[$i]: prefetch skipped, pronunciation markup not ready")
                     break
                 }
@@ -215,7 +213,6 @@ class TtsQueue(
         "${paragraph.documentId}_${paragraph.id}_${cacheNamespace}_s${(speed * 1000f).toInt()}" +
             "_t${stableTextHash(preparedText)}_v$AUDIO_CACHE_PIPELINE_VERSION"
 
-    /** Deterministic cross-platform hash used only for persistent cache invalidation. */
     private fun stableTextHash(text: String): String {
         var hash = 0
         for (ch in text) hash = 31 * hash + ch.code
