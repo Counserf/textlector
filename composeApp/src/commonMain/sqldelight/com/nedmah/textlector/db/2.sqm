@@ -1,0 +1,4 @@
+-- Pronunciation pipeline v2: old tts_text may contain incomplete RUAccent markup.
+-- Clearing only derived speech text preserves the imported book and forces the
+-- background worker to rebuild pronunciation data with the current pipeline.
+UPDATE paragraph SET tts_text = NULL;
