@@ -69,12 +69,16 @@ import ComposeApp
             )
         }
 
-        // The common Kotlin preprocessor already normalizes Russian numbers and
-        // resolves high-confidence homographs. The bundled RUAccent dictionaries
-        // add broad deterministic ё/stress coverage without changing book text.
-        let preparedText = currentLang.lowercased().hasPrefix("ru")
-            ? RussianPronunciationDictionary.shared.process(text)
+        // Common Kotlin first normalizes Russian numbers and high-confidence rules.
+        // Then the lazy tiny2.1 classifier resolves remaining context-dependent
+        // homographs; finally the deterministic RUAccent dictionary fills ordinary
+        // stress and ё. The displayed book text is never changed.
+        let contextualText = currentLang.lowercased().hasPrefix("ru")
+            ? RussianHomographResolver.shared.process(text)
             : text
+        let preparedText = currentLang.lowercased().hasPrefix("ru")
+            ? RussianPronunciationDictionary.shared.process(contextualText)
+            : contextualText
 
         guard let data = bridge.generate(
             text: preparedText,
@@ -153,8 +157,7 @@ import ComposeApp
 /// Broad deterministic Russian pronunciation dictionary shared by Piper and
 /// Supertonic on iOS. The bundle contains RUAccent's compact dictionaries only;
 /// contextual homographs are deliberately skipped here so they are not assigned
-/// the wrong meaning. They remain handled by the common contextual rules (and a
-/// future optional neural homograph resolver).
+/// the wrong meaning. They are resolved by RussianHomographResolver first.
 final class RussianPronunciationDictionary {
     static let shared = RussianPronunciationDictionary()
 
