@@ -1,5 +1,6 @@
 package com.nedmah.textlector.common.platform.logging
 
+import com.nedmah.textlector.di.IosEngineHolder
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 import okio.FileSystem
@@ -61,4 +62,7 @@ actual object TtsDiagnosticLog {
         UIPasteboard.generalPasteboard.string = read()
         true
     }.getOrDefault(false)
+
+    actual fun export(): Boolean =
+        IosEngineHolder.diagnosticLogExporter?.export(read()) ?: false
 }
