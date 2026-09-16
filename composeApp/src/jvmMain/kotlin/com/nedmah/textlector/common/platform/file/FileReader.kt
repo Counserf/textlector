@@ -20,14 +20,23 @@ actual class FileReader {
             }
         }
 
-    actual suspend fun readPdf(uri: String): Result<String> =
-        withContext(Dispatchers.IO) {
-            runCatching {
-                val document = PDDocument.load(File(uri))
-                val stripper = PDFTextStripper()
-                val text = stripper.getText(document)
-                document.close()
+    actual suspend fun readPdf(
+        uri: String,
+        onProgress: (current: Int, total: Int) -> Unit,
+    ): Result<String> = withContext(Dispatchers.IO) {
+        runCatching {
+            PDDocument.load(File(uri)).use { document ->
+                val total = document.numberOfPages.coerceAtLeast(1)
+                onProgress(0, total)
+                val text = PDFTextStripper().getText(document)
+                onProgress(total, total)
                 text
             }
+        }
+    }
+
+    actual suspend fun readBytes(uri: String): Result<ByteArray> =
+        withContext(Dispatchers.IO) {
+            runCatching { File(uri).readBytes() }
         }
 }
