@@ -1,4 +1,4 @@
-@file:OptIn(ExperimentalTime::class, ExperimentalAtomicApi::class, ExperimentalAtomicApi::class)
+@file:OptIn(ExperimentalTime::class, ExperimentalAtomicApi::class)
 
 package com.nedmah.textlector.common.platform.tts
 
@@ -22,88 +22,65 @@ import kotlin.time.ExperimentalTime
 private const val TTS_QUEUE_LOGS = true
 
 private fun ttsLog(message: String) {
-    if (TTS_QUEUE_LOGS) println(
-        "[TtsQueue ${
-            Clock.System.now().toEpochMilliseconds() % 100_000
-        }ms] $message"
-    )
+    if (TTS_QUEUE_LOGS) println("[TtsQueue ${Clock.System.now().toEpochMilliseconds() % 100_000}ms] $message")
 }
 
-/**
- * Buffer for audio pre-generation (Piper/Supertonic).
- *
- * [preprocess] is applied immediately before neural generation, including
- * background prefetch. This keeps the document text untouched while allowing
- * language-specific number expansion, stress and homograph hints.
- */
 class TtsQueue(
     val engine: SherpaOnnxTtsEngine,
     val bufferSize: Int = 1,
+    private val cacheNamespace: String,
     private val preprocess: suspend (String) -> String = { it },
+    private val audioCache: TtsAudioCache = TtsAudioCache(),
 ) {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val mutex = Mutex()
-
-    // key - paragraph index. value - deferred with audio (in-progress or completed).
+    private val generationMutex = Mutex()
     private val pending = mutableMapOf<Int, CompletableDeferred<ByteArray>>()
     private val generationId = AtomicInt(0)
 
-    /**
-     * Called AFTER we began to play [currentIndex].
-     * Launches background operations for [bufferSize] paragraphs.
-     */
     fun prefetchAhead(currentIndex: Int, paragraphs: List<Paragraph>, speed: Float) {
         scope.launch {
             val capturedGeneration = generationId.load()
             evictStale(currentIndex)
-
             val from = currentIndex + 1
             val until = minOf(from + bufferSize, paragraphs.size)
 
-            if (from >= paragraphs.size) {
-                ttsLog("prefetchAhead($currentIndex): end of the doc")
-                return@launch
-            }
-            ttsLog("prefetchAhead($currentIndex): buffering paragraphs [$from, ${until - 1}]")
+            if (from >= paragraphs.size) return@launch
+            ttsLog("prefetchAhead($currentIndex): [$from, ${until - 1}]")
 
             for (i in from until until) {
-                val isStale = generationId.load() != capturedGeneration
-                if (isStale) {
-                    ttsLog("  paragraph[$i]: is old (clear called), cancelling")
-                    break
-                }
-
-                val (deferred, shouldGenerate) = acquireSlot(i)
-                if (!shouldGenerate) {
-                    ttsLog("  paragraph[$i]: already in buffer (HIT), skip")
+                if (generationId.load() != capturedGeneration) break
+                val paragraph = paragraphs[i]
+                val disk = audioCache.load(cacheKey(paragraph, speed))
+                if (disk != null) {
+                    ttsLog("  paragraph[$i]: CACHE FILE HIT, size=${disk.size}b")
                     continue
                 }
 
-                ttsLog("  paragraph[$i]: begin preprocessing/generating...")
-                val startMs = Clock.System.now().toEpochMilliseconds()
+                val (deferred, shouldGenerate) = acquireSlot(i)
+                if (!shouldGenerate) continue
 
+                val startMs = Clock.System.now().toEpochMilliseconds()
                 try {
-                    val preparedText = preprocess(paragraphs[i].text)
-                    val audio = engine.generate(preparedText, speed)
+                    val audio = generationMutex.withLock {
+                        val preparedText = paragraph.ttsText ?: preprocess(paragraph.text)
+                        engine.generate(preparedText, speed)
+                    }
                     if (audio.isEmpty()) {
-                        ttsLog("  paragraph[$i]: generate returned empty array (stop was called), cancelling")
                         deferred.cancel()
                         break
                     }
-
+                    audioCache.save(cacheKey(paragraph, speed), audio)
                     val elapsed = Clock.System.now().toEpochMilliseconds() - startMs
-                    val stillValid = generationId.load() == capturedGeneration
-                    if (stillValid) {
+                    if (generationId.load() == capturedGeneration) {
                         deferred.complete(audio)
-                        ttsLog("  paragraph[$i]: ready in ${elapsed}ms, size=${audio.size}b")
+                        ttsLog("  paragraph[$i]: ready in ${elapsed}ms, saved=${audio.size}b")
                     } else {
                         deferred.cancel()
-                        ttsLog("  paragraph[$i]: ready in ${elapsed}ms, but is old - cancelling")
                         break
                     }
                 } catch (e: CancellationException) {
                     deferred.cancel()
-                    ttsLog("  paragraph[$i]: cancelled (CancellationException)")
                     break
                 } catch (e: Exception) {
                     deferred.completeExceptionally(e)
@@ -113,60 +90,62 @@ class TtsQueue(
         }
     }
 
-    /**
-     * Returns audio for [index]. If it is not already prefetched, preprocesses
-     * the paragraph and generates it synchronously.
-     */
-    suspend fun getAudio(index: Int, text: String, speed: Float): ByteArray {
-        val (deferred, shouldGenerate) = acquireSlot(index)
+    suspend fun getAudio(index: Int, paragraph: Paragraph, speed: Float): ByteArray {
+        val key = cacheKey(paragraph, speed)
+        audioCache.load(key)?.let {
+            ttsLog("getAudio($index): CACHE FILE HIT, size=${it.size}b")
+            return it
+        }
 
+        val (deferred, shouldGenerate) = acquireSlot(index)
         if (shouldGenerate) {
-            ttsLog("getAudio($index): CACHE MISS — preprocessing/generating sync")
+            ttsLog("getAudio($index): CACHE MISS — generating")
             val capturedGeneration = generationId.load()
-            val startMs = Clock.System.now().toEpochMilliseconds()
             try {
-                val preparedText = preprocess(text)
-                val audio = engine.generate(preparedText, speed)
+                val audio = generationMutex.withLock {
+                    val preparedText = paragraph.ttsText ?: preprocess(paragraph.text)
+                    engine.generate(preparedText, speed)
+                }
                 if (audio.isEmpty()) {
                     deferred.cancel()
-                    ttsLog("getAudio($index): generate returned empty array (stop was called)")
                     throw CancellationException("generate() returned empty audio")
                 }
-                val elapsed = Clock.System.now().toEpochMilliseconds() - startMs
-                val isStale = generationId.load() != capturedGeneration
-                if (isStale) {
+                if (generationId.load() != capturedGeneration) {
                     deferred.cancel()
-                    ttsLog("getAudio($index): ready in ${elapsed}ms, but is old - cancelling")
                     throw CancellationException("Generation invalidated by clear()")
                 }
-                val completed = deferred.complete(audio)
-                ttsLog("getAudio($index): ready in ${elapsed}ms, size=${audio.size}b, completed=$completed")
-
+                audioCache.save(key, audio)
+                deferred.complete(audio)
                 mutex.withLock { pending.remove(index) }
                 return audio
             } catch (e: Exception) {
                 if (!deferred.isCompleted) deferred.completeExceptionally(e)
                 throw e
             }
-        } else {
-            val audio = try {
-                if (!deferred.isCompleted) {
-                    val startMs = Clock.System.now().toEpochMilliseconds()
-                    val result = deferred.await()
-                    ttsLog("getAudio($index): waited for ${Clock.System.now().toEpochMilliseconds() - startMs}ms")
-                    result
-                } else {
-                    ttsLog("getAudio($index): CACHE HIT - return instant")
-                    deferred.await()
-                }
-            } catch (e: Exception) {
-                mutex.withLock { pending.remove(index) }
-                throw e
-            }
+        }
+
+        return try {
+            val audio = deferred.await()
             mutex.withLock { pending.remove(index) }
-            return audio
+            audio
+        } catch (e: Exception) {
+            mutex.withLock { pending.remove(index) }
+            throw e
         }
     }
+
+    suspend fun preGenerate(paragraph: Paragraph, speed: Float): Boolean {
+        val key = cacheKey(paragraph, speed)
+        if (audioCache.exists(key)) return true
+        val preparedText = paragraph.ttsText ?: preprocess(paragraph.text)
+        val audio = generationMutex.withLock { engine.generate(preparedText, speed) }
+        if (audio.isEmpty()) return false
+        audioCache.save(key, audio)
+        return true
+    }
+
+    suspend fun isPersistentlyCached(paragraph: Paragraph, speed: Float): Boolean =
+        audioCache.exists(cacheKey(paragraph, speed))
 
     @OptIn(ExperimentalCoroutinesApi::class)
     fun getCachedAudio(index: Int): ByteArray? {
@@ -198,10 +177,9 @@ class TtsQueue(
         clear()
     }
 
-    /**
-     * Returns existing deferred (shouldGenerate=false),
-     * or creates new slot (shouldGenerate=true).
-     */
+    private fun cacheKey(paragraph: Paragraph, speed: Float): String =
+        "${paragraph.documentId}_${paragraph.id}_${cacheNamespace}_s${(speed * 1000f).toInt()}_v2"
+
     private suspend fun acquireSlot(index: Int): Pair<CompletableDeferred<ByteArray>, Boolean> =
         mutex.withLock {
             val existing = pending[index]
@@ -216,12 +194,10 @@ class TtsQueue(
 
     private suspend fun evictStale(currentIndex: Int) {
         mutex.withLock {
-            pending.keys
-                .filter { it < currentIndex }
-                .forEach { key ->
-                    pending[key]?.cancel()
-                    pending.remove(key)
-                }
+            pending.keys.filter { it < currentIndex }.forEach { key ->
+                pending[key]?.cancel()
+                pending.remove(key)
+            }
         }
     }
 }
