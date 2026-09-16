@@ -20,6 +20,28 @@ class ParagraphRepositoryImpl(
         queries.selectByDocumentId(documentId).asFlow().mapToList(Dispatchers.IO)
             .map { list -> list.map { it.toDomain() } }
 
+    override suspend fun getParagraphByIndex(documentId: String, index: Int): Paragraph? =
+        withContext(Dispatchers.IO) {
+            queries.selectByDocumentIdAndIndex(
+                documentId = documentId,
+                indexInDoc = index.toLong()
+            ).executeAsOneOrNull()?.toDomain()
+        }
+
+    override suspend fun getParagraphIndices(documentId: String): List<Int> =
+        withContext(Dispatchers.IO) {
+            queries.selectIndicesByDocumentId(documentId)
+                .executeAsList()
+                .map { it.toInt() }
+        }
+
+    override suspend fun getPreparedParagraphIndices(documentId: String): Set<Int> =
+        withContext(Dispatchers.IO) {
+            queries.selectPreparedIndicesByDocumentId(documentId)
+                .executeAsList()
+                .mapTo(mutableSetOf()) { it.toInt() }
+        }
+
     override suspend fun saveParagraphs(paragraphs: List<Paragraph>): Result<Unit> =
         withContext(Dispatchers.IO) {
             runCatching {
@@ -45,7 +67,7 @@ class ParagraphRepositoryImpl(
         }
 
     override suspend fun deleteParagraphsByDocumentId(documentId: String): Result<Unit> =
-        withContext(Dispatchers.IO){
+        withContext(Dispatchers.IO) {
             runCatching {
                 queries.deleteByDocumentId(documentId)
             }
