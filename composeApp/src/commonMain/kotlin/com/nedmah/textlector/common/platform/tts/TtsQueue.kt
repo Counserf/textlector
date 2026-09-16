@@ -30,33 +30,27 @@ private fun ttsLog(message: String) {
 }
 
 /**
- * Buffer for audio pre-generation (Piper/sherpa-onnx).
+ * Buffer for audio pre-generation (Piper/Supertonic).
  *
- * Each paragraph index has its own CompletableDeferred<ByteArray>,
- * so getAudio(i) only waits for a specific element, not the entire batch.
- *
- * Deferred lifecycle:
- * pending[i] appears → generation in progress → deferred.complete(audio)
- * getAudio(i) called before complete → suspend until complete
- * getAudio(i) called after complete → returns immediately
+ * [preprocess] is applied immediately before neural generation, including
+ * background prefetch. This keeps the document text untouched while allowing
+ * language-specific number expansion, stress and homograph hints.
  */
 class TtsQueue(
     val engine: SherpaOnnxTtsEngine,
-    val bufferSize: Int = 1
+    val bufferSize: Int = 1,
+    private val preprocess: suspend (String) -> String = { it },
 ) {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val mutex = Mutex()
 
-    // key - paragraph index. value - deferred with audio (in-progress oor completed).
+    // key - paragraph index. value - deferred with audio (in-progress or completed).
     private val pending = mutableMapOf<Int, CompletableDeferred<ByteArray>>()
-
-
     private val generationId = AtomicInt(0)
 
     /**
-     * calls AFTER we began to play [currentIndex].
+     * Called AFTER we began to play [currentIndex].
      * Launches background operations for [bufferSize] paragraphs.
-     * If paragraph already pending — skip.
      */
     fun prefetchAhead(currentIndex: Int, paragraphs: List<Paragraph>, speed: Float) {
         scope.launch {
@@ -73,7 +67,6 @@ class TtsQueue(
             ttsLog("prefetchAhead($currentIndex): buffering paragraphs [$from, ${until - 1}]")
 
             for (i in from until until) {
-
                 val isStale = generationId.load() != capturedGeneration
                 if (isStale) {
                     ttsLog("  paragraph[$i]: is old (clear called), cancelling")
@@ -84,13 +77,14 @@ class TtsQueue(
                 if (!shouldGenerate) {
                     ttsLog("  paragraph[$i]: already in buffer (HIT), skip")
                     continue
-                }  // already in buffer or generating
+                }
 
-                ttsLog("  paragraph[$i]: begin generating...")
+                ttsLog("  paragraph[$i]: begin preprocessing/generating...")
                 val startMs = Clock.System.now().toEpochMilliseconds()
 
                 try {
-                    val audio = engine.generate(paragraphs[i].text, speed)
+                    val preparedText = preprocess(paragraphs[i].text)
+                    val audio = engine.generate(preparedText, speed)
                     if (audio.isEmpty()) {
                         ttsLog("  paragraph[$i]: generate returned empty array (stop was called), cancelling")
                         deferred.cancel()
@@ -104,15 +98,15 @@ class TtsQueue(
                         ttsLog("  paragraph[$i]: ready in ${elapsed}ms, size=${audio.size}b")
                     } else {
                         deferred.cancel()
-                        ttsLog("  paragraph[$i]: ready in ${elapsed}ms, but is old - calcelling")
+                        ttsLog("  paragraph[$i]: ready in ${elapsed}ms, but is old - cancelling")
                         break
                     }
                 } catch (e: CancellationException) {
                     deferred.cancel()
                     ttsLog("  paragraph[$i]: cancelled (CancellationException)")
-                    break  // stop fully on cancel
+                    break
                 } catch (e: Exception) {
-                    deferred.completeExceptionally(e) // continue on next paragraph
+                    deferred.completeExceptionally(e)
                     ttsLog("  paragraph[$i]: error — ${e.message}")
                 }
             }
@@ -120,31 +114,29 @@ class TtsQueue(
     }
 
     /**
-     * Returns audio for [index].
-     * - If deferred already completed (is ready from prefetch) — returns in instant.
-     * - If generating in-progress — suspend until finish.
-     * - If paragraph is not in pending — generates now (cache miss).
+     * Returns audio for [index]. If it is not already prefetched, preprocesses
+     * the paragraph and generates it synchronously.
      */
     suspend fun getAudio(index: Int, text: String, speed: Float): ByteArray {
         val (deferred, shouldGenerate) = acquireSlot(index)
 
         if (shouldGenerate) {
-            ttsLog("getAudio($index): CACHE MISS — generating sync")
+            ttsLog("getAudio($index): CACHE MISS — preprocessing/generating sync")
             val capturedGeneration = generationId.load()
             val startMs = Clock.System.now().toEpochMilliseconds()
             try {
-                val audio = engine.generate(text, speed)
+                val preparedText = preprocess(text)
+                val audio = engine.generate(preparedText, speed)
                 if (audio.isEmpty()) {
                     deferred.cancel()
                     ttsLog("getAudio($index): generate returned empty array (stop was called)")
                     throw CancellationException("generate() returned empty audio")
                 }
                 val elapsed = Clock.System.now().toEpochMilliseconds() - startMs
-                val isStale =
-                    generationId.load() != capturedGeneration  // if while generating clear was called
+                val isStale = generationId.load() != capturedGeneration
                 if (isStale) {
                     deferred.cancel()
-                    ttsLog("getAudio($index): ready in ${elapsed}ms, but is old - calcelling")
+                    ttsLog("getAudio($index): ready in ${elapsed}ms, but is old - cancelling")
                     throw CancellationException("Generation invalidated by clear()")
                 }
                 val completed = deferred.complete(audio)
@@ -222,9 +214,6 @@ class TtsQueue(
             }
         }
 
-    /**
-     * Removes useless indexes (behind currentIndex).
-     */
     private suspend fun evictStale(currentIndex: Int) {
         mutex.withLock {
             pending.keys
