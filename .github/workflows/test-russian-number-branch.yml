@@ -29,7 +29,7 @@ jobs:
       - name: Run isolated Russian TTS preprocessor tests
         shell: bash
         run: |
-          set -euxo pipefail
+          set -uxo pipefail
           chmod +x ./gradlew
 
           TEST_DIR="$RUNNER_TEMP/russian-preprocessor-test"
@@ -80,3 +80,11 @@ jobs:
           ./gradlew -p "$TEST_DIR" test \
             --tests 'com.nedmah.textlector.RussianTtsPreprocessorTest' \
             --stacktrace
+          STATUS=$?
+
+          if [ "$STATUS" -ne 0 ]; then
+            echo '--- test result XML ---'
+            find "$TEST_DIR/build/test-results/test" -type f -name '*.xml' -maxdepth 1 -print -exec cat {} \; || true
+          fi
+
+          exit "$STATUS"
