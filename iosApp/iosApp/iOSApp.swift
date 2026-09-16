@@ -13,6 +13,7 @@ struct iOSApp: App {
         IosEngineHolder.shared.supertonicEngine = supertonicEngine
         IosEngineHolder.shared.supertonicTts = supertonicEngine.tts
         IosEngineHolder.shared.pronunciationEnhancer = IosPronunciationEnhancer()
+        IosEngineHolder.shared.remotePlaybackController = IosRemotePlaybackController()
         SupertonicHolder.shared.bridge = supertonicEngine.bridge
 
         IosEngineHolder.shared.tarExtractor = IosTarExtractor()
