@@ -21,7 +21,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -169,13 +168,11 @@ class PlayerViewModel(
             }
 
             launch {
-                getParagraphsUseCase(documentId)
-                    .first()
-                    .let { paragraphs ->
-                        playerLog("setPlaylist paragraphs=${paragraphs.size}, prepared=${paragraphs.count { it.ttsText != null }}")
-                        ttsEngine.setPlaylist(paragraphs)
-                        _state.update { it.copy(paragraphs = paragraphs, isLoading = false) }
-                    }
+                getParagraphsUseCase(documentId).collect { paragraphs ->
+                    playerLog("setPlaylist paragraphs=${paragraphs.size}, prepared=${paragraphs.count { it.ttsText != null }}")
+                    ttsEngine.setPlaylist(paragraphs)
+                    _state.update { it.copy(paragraphs = paragraphs, isLoading = false) }
+                }
             }
         }
     }
