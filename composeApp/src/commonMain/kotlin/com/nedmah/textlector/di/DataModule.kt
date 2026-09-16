@@ -90,7 +90,7 @@ val dataModule = module {
         ReaderViewModel(get(), get(), get(), get(), get())
     }
     factory {
-        ImportViewModel(get(), get(), get(), get(), get(), get(), get())
+        ImportViewModel(get(), get(), get(), get(), get(), get(), get(), get())
     }
     factory {
         SettingsViewModel(get(), get(), get(), get(), get(), get(), get())
