@@ -13,19 +13,19 @@ object RussianContextNumberNormalizer {
 
     private val clock = Regex("""(?<!\d)([01]?\d|2[0-3]):([0-5]\d)(?!\d)""")
     private val yearPrepositional = Regex(
-        """\b(в|на)\s+(1\d{3}|2\d{3})\s+(году)\b""",
+        """(?<![А-Яа-яЁё0-9_])(в|на)\s+(1\d{3}|2\d{3})\s+(году)(?![А-Яа-яЁё0-9_])""",
         RegexOption.IGNORE_CASE,
     )
     private val yearDative = Regex(
-        """\b(к|ко)\s+(1\d{3}|2\d{3})\s+(году)\b""",
+        """(?<![А-Яа-яЁё0-9_])(к|ко)\s+(1\d{3}|2\d{3})\s+(году)(?![А-Яа-яЁё0-9_])""",
         RegexOption.IGNORE_CASE,
     )
     private val yearGenitiveWithPreposition = Regex(
-        """\b(с|до|после)\s+(1\d{3}|2\d{3})\s+(года)\b""",
+        """(?<![А-Яа-яЁё0-9_])(с|до|после)\s+(1\d{3}|2\d{3})\s+(года)(?![А-Яа-яЁё0-9_])""",
         RegexOption.IGNORE_CASE,
     )
     private val bareYear = Regex(
-        """\b(1\d{3}|2\d{3})\s+(год|года|годом)\b""",
+        """(?<![А-Яа-яЁё0-9_])(1\d{3}|2\d{3})\s+(год|года|годом)(?![А-Яа-яЁё0-9_])""",
         RegexOption.IGNORE_CASE,
     )
 
@@ -135,7 +135,7 @@ object RussianContextNumberNormalizer {
     private fun replaceBefore(text: String, from: String, to: String, nouns: List<String>): String {
         val alternatives = nouns.joinToString("|") { Regex.escape(it) }
         val regex = Regex(
-            """\b${Regex.escape(from)}(?=\s+(?:$alternatives)\b)""",
+            """(?<![А-Яа-яЁё])${Regex.escape(from)}(?=\s+(?:$alternatives)(?![А-Яа-яЁё]))""",
             RegexOption.IGNORE_CASE,
         )
         return regex.replace(text, to)
