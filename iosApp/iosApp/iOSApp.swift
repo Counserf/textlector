@@ -12,6 +12,7 @@ struct iOSApp: App {
         IosEngineHolder.shared.sherpaEngine = sherpaEngine
         IosEngineHolder.shared.supertonicEngine = supertonicEngine
         IosEngineHolder.shared.supertonicTts = supertonicEngine.tts
+        IosEngineHolder.shared.pronunciationEnhancer = IosPronunciationEnhancer()
         SupertonicHolder.shared.bridge = supertonicEngine.bridge
 
         IosEngineHolder.shared.tarExtractor = IosTarExtractor()
@@ -55,7 +56,6 @@ struct iOSApp: App {
             try fileManager.copyItem(at: url, to: destination)
             MainViewControllerKt.handleIncomingFile(path: destination.path)
         } catch {
-            // Files already copied into the app sandbox can still be consumed directly.
             MainViewControllerKt.handleIncomingFile(path: url.path)
         }
     }
