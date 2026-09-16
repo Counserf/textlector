@@ -3,6 +3,7 @@ CREATE TABLE paragraph (
     document_id TEXT NOT NULL,
     index_in_doc INTEGER NOT NULL,
     text TEXT NOT NULL,
+    tts_text TEXT,
     FOREIGN KEY (document_id) REFERENCES document(id) ON DELETE CASCADE
 );
 
@@ -14,8 +15,13 @@ WHERE document_id = :documentId
 ORDER BY index_in_doc ASC;
 
 insertParagraph:
-INSERT INTO paragraph(id, document_id, index_in_doc, text)
-VALUES (?, ?, ?, ?);
+INSERT INTO paragraph(id, document_id, index_in_doc, text, tts_text)
+VALUES (?, ?, ?, ?, ?);
+
+updateTtsText:
+UPDATE paragraph
+SET tts_text = :ttsText
+WHERE id = :paragraphId;
 
 deleteByDocumentId:
 DELETE FROM paragraph
