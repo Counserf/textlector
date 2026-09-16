@@ -5,7 +5,6 @@
 import Foundation
 import ComposeApp
 
-
 @objc class IosSherpaEngine: NSObject, SherpaOnnxTtsEngine {
 
     private let bridge = SherpaOnnxTtsBridge()
@@ -25,17 +24,11 @@ import ComposeApp
     func speak(index: Int32, speed: Float) async throws {
         guard isModelLoaded else { return }
         guard index >= 0 && Int(index) < paragraphs.count else { return }
-        let text = paragraphs[Int(index)].text
-        let prepared = currentLanguage.lowercased().hasPrefix("ru")
-            ? RussianHomographResolver.shared.process(text)
-            : text
-        bridge.speak(text: prepared, speed: speed)
+        bridge.speak(text: paragraphs[Int(index)].ttsText ?? paragraphs[Int(index)].text, speed: speed)
     }
 
     func loadVoice(model: VoiceModel) async throws {
-        guard let path = repository.getModelPath(id: model.id) else {
-            return
-        }
+        guard let path = repository.getModelPath(id: model.id) else { return }
 
         currentLanguage = model.language
         bridge.loadModel(
@@ -47,10 +40,9 @@ import ComposeApp
     }
 
     func generate(text: String, speed: Float) async throws -> KotlinByteArray {
-        let prepared = currentLanguage.lowercased().hasPrefix("ru")
-            ? RussianHomographResolver.shared.process(text)
-            : text
-        let data = bridge.generateAudio(text: prepared, speed: speed)
+        // Pronunciation/RUAccent work is performed by the background book worker.
+        // Playback generation must only consume the already prepared text.
+        let data = bridge.generateAudio(text: text, speed: speed)
         let bytes = [UInt8](data)
         let result = KotlinByteArray(size: Int32(bytes.count))
         for (i, byte) in bytes.enumerated() {
@@ -74,5 +66,4 @@ import ComposeApp
     func shutdown() {
         bridge.stop()
     }
-
 }
