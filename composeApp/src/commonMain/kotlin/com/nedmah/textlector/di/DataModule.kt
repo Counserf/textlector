@@ -81,7 +81,7 @@ val dataModule = module {
     single {
         val engine = get<TtsEngine>()
         val isBuffering = (engine as SwitchableTtsEngine).isBuffering
-        PlayerViewModel(get(), get(), get(), get(), get(), engine, isBuffering)
+        PlayerViewModel(get(), get(), get(), get(), get(), engine, isBuffering, get())
     }
     viewModel {
         LibraryViewModel(get(), get(), get(), get(), get(), get(), get())
@@ -90,7 +90,7 @@ val dataModule = module {
         ReaderViewModel(get(), get(), get(), get(), get())
     }
     factory {
-        ImportViewModel(get(), get(), get(), get(), get(), get(), get(), get())
+        ImportViewModel(get(), get(), get(), get(), get(), get(), get())
     }
     factory {
         SettingsViewModel(get(), get(), get(), get(), get(), get(), get())
