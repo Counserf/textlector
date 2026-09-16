@@ -12,4 +12,11 @@ import ComposeApp
             return RussianPronunciationDictionary.shared.process(contextual)
         }
     }
+
+    func releaseResources() {
+        // Lifecycle hook used after a book has been fully marked up. The current
+        // RUAccent implementation keeps one shared session to avoid repeated model
+        // loads; playback itself never touches it. A later model wrapper can release
+        // the ORT session here without changing the Kotlin processing pipeline.
+    }
 }
