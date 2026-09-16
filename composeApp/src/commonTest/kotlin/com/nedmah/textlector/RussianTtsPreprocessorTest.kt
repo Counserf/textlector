@@ -82,6 +82,26 @@ class RussianTtsPreprocessorTest {
     }
 
     @Test
+    fun expandsNumericCalendarDates() {
+        assertEquals(
+            "Дата: двенадцатого сентября две тысячи двадцать шестого года.",
+            preprocessor.process("Дата: 12.09.2026.", "ru")
+        )
+        assertEquals(
+            "Релиз первого января две тысячи двадцать четвёртого года.",
+            preprocessor.process("Релиз 01/01/2024.", "ru")
+        )
+        assertEquals(
+            "Високосная дата двадцать девятого февраля две тысячи двадцать четвёртого года.",
+            preprocessor.process("Високосная дата 29.02.2024.", "ru")
+        )
+        assertEquals(
+            "Неверная дата 29.02.2023 не должна меняться.",
+            preprocessor.process("Неверная дата 29.02.2023 не должна меняться.", "ru")
+        )
+    }
+
+    @Test
     fun resolvesHomographsOnlyWhenContextIsUseful() {
         val lock = preprocessor.process("Он открыл замок ключом.", "ru")
         val castle = preprocessor.process("Старинный замок возвышался над городом.", "ru")
