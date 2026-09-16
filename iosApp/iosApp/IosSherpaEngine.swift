@@ -32,8 +32,17 @@ import ComposeApp
             return
         }
         guard index >= 0 && Int(index) < paragraphs.count else { return }
-        diag("speak START index=\(index) speed=\(speed)")
-        bridge.speak(text: paragraphs[Int(index)].ttsText ?? paragraphs[Int(index)].text, speed: speed)
+        let paragraph = paragraphs[Int(index)]
+        guard let prepared = paragraph.ttsText else {
+            diag("speak ABORT index=\(index) pronunciation markup not ready")
+            throw NSError(
+                domain: "TextLector.Piper",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "Отрывок \(index + 1) ещё не прошёл разметку произношения."]
+            )
+        }
+        diag("speak START index=\(index) speed=\(speed) prepared=true")
+        bridge.speak(text: prepared, speed: speed)
         diag("speak END index=\(index)")
     }
 
