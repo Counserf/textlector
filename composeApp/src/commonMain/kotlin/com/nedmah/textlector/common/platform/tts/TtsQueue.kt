@@ -21,7 +21,7 @@ import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 
 private const val TTS_QUEUE_LOGS = true
-private const val AUDIO_CACHE_PIPELINE_VERSION = 3
+private const val AUDIO_CACHE_PIPELINE_VERSION = 4
 
 private fun ttsLog(message: String) {
     if (TTS_QUEUE_LOGS) println("[TtsQueue ${Clock.System.now().toEpochMilliseconds() % 100_000}ms] $message")
