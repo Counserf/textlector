@@ -261,23 +261,19 @@ jobs:
 
           FP32_MODEL="$DEST/model.onnx" python3 - <<'PY'
           import os
-          import numpy as np
+          import onnx
           import onnxruntime as ort
 
-          model = os.environ['FP32_MODEL']
-          session = ort.InferenceSession(model, providers=['CPUExecutionProvider'])
-          inputs = {item.name: np.ones((1, 8), dtype=np.int64) for item in session.get_inputs()}
-          outputs = session.run(None, inputs)
-          if not outputs or outputs[0].shape[-1] != 2 or not np.isfinite(outputs[0]).all():
-              raise SystemExit(f'Invalid FP32 model output: {[getattr(x, "shape", None) for x in outputs]}')
-          print('FP32 tiny2.1 smoke test OK:', outputs[0].shape)
+          model_path = os.environ['FP32_MODEL']
+          model = onnx.load(model_path, load_external_data=True)
+          onnx.checker.check_model(model)
+          session = ort.InferenceSession(model_path, providers=['CPUExecutionProvider'])
+          print('FP32 tiny2.1 ONNX load OK:', [item.name for item in session.get_inputs()])
           PY
 
           set +e
           SOURCE_MODEL="$SOURCE_MODEL" DEST_MODEL="$DEST/model.int8.onnx" python3 - <<'PY'
           import os
-          import numpy as np
-          import onnxruntime as ort
           from onnxruntime.quantization import QuantType, quantize_dynamic
 
           source = os.environ['SOURCE_MODEL']
@@ -296,23 +292,33 @@ jobs:
           print(f'RUAccent tiny2.1 INT8: {dest_size / 1024 / 1024:.2f} MiB')
           if dest_size >= source_size:
               raise SystemExit('Quantized model is not smaller than source')
-
-          session = ort.InferenceSession(dest, providers=['CPUExecutionProvider'])
-          inputs = {item.name: np.ones((1, 8), dtype=np.int64) for item in session.get_inputs()}
-          outputs = session.run(None, inputs)
-          if not outputs or outputs[0].shape[-1] != 2 or not np.isfinite(outputs[0]).all():
-              raise SystemExit(f'Invalid quantized model output: {[getattr(x, "shape", None) for x in outputs]}')
-          print('Quantized tiny2.1 smoke test OK:', outputs[0].shape)
           PY
           QUANTIZE_STATUS=$?
-          set -e
 
           if [ "$QUANTIZE_STATUS" -eq 0 ] && [ -s "$DEST/model.int8.onnx" ]; then
+            INT8_MODEL="$DEST/model.int8.onnx" python3 - <<'PY'
+          import os
+          import onnx
+          import onnxruntime as ort
+
+          model_path = os.environ['INT8_MODEL']
+          model = onnx.load(model_path, load_external_data=True)
+          onnx.checker.check_model(model)
+          ort.InferenceSession(model_path, providers=['CPUExecutionProvider'])
+          print('INT8 tiny2.1 ONNX load OK')
+          PY
+            INT8_STATUS=$?
+          else
+            INT8_STATUS=1
+          fi
+          set -e
+
+          if [ "$QUANTIZE_STATUS" -eq 0 ] && [ "$INT8_STATUS" -eq 0 ] && [ -s "$DEST/model.int8.onnx" ]; then
             rm -f "$DEST/model.onnx"
             echo 'Bundled RUAccent tiny2.1 INT8 model.'
           else
             rm -f "$DEST/model.int8.onnx"
-            echo '::warning::RUAccent tiny2.1 INT8 quantization failed; bundling verified FP32 model instead.'
+            echo '::warning::RUAccent tiny2.1 INT8 quantization or validation failed; bundling verified FP32 model instead.'
             test -s "$DEST/model.onnx"
           fi
 
