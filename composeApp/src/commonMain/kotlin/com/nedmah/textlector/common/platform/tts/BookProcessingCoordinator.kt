@@ -1,5 +1,6 @@
 package com.nedmah.textlector.common.platform.tts
 
+import com.nedmah.textlector.common.platform.logging.TtsDiagnosticLog
 import com.nedmah.textlector.common.platform.tts.text.PronunciationMarker
 import com.nedmah.textlector.domain.repository.ParagraphRepository
 import com.nedmah.textlector.domain.repository.PreferencesRepository
@@ -15,7 +16,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 data class BookProcessingState(
     val documentId: String = "",
@@ -28,6 +32,7 @@ data class BookProcessingState(
     val audioReadyIndices: Set<Int> = emptySet(),
     val audioCurrentIndex: Int? = null,
     val audioRunning: Boolean = false,
+    val audioWaitingForMarkup: Boolean = false,
     val error: String? = null,
 ) {
     val markupComplete: Boolean get() = totalParagraphs > 0 && markupDone >= totalParagraphs
@@ -41,6 +46,7 @@ class BookProcessingCoordinator(
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val marker = PronunciationMarker()
+    private val markerMutex = Mutex()
     private val _states = MutableStateFlow<Map<String, BookProcessingState>>(emptyMap())
     val states: StateFlow<Map<String, BookProcessingState>> = _states.asStateFlow()
 
@@ -54,42 +60,52 @@ class BookProcessingCoordinator(
     fun startMarkup(documentId: String) {
         if (markupJobs[documentId]?.isActive == true) return
         markupJobs[documentId] = scope.launch {
-            runCatching {
-                val language = preferencesRepository.getPreferences().first().language
-                val paragraphs = paragraphRepository.getParagraphsByDocumentId(documentId).first()
-                val ready = paragraphs.filter { it.ttsText != null }.map { it.index }.toMutableSet()
-                update(documentId) {
-                    it.copy(
-                        totalParagraphs = paragraphs.size,
-                        markupDone = ready.size,
-                        markupReadyIndices = ready.toSet(),
-                        markupRunning = ready.size < paragraphs.size,
-                        error = null
-                    )
-                }
-
-                for (paragraph in paragraphs) {
-                    if (paragraph.index in ready) continue
-                    update(documentId) { it.copy(markupCurrentIndex = paragraph.index, markupRunning = true) }
-                    val prepared = marker.prepare(paragraph.text, language)
-                    paragraphRepository.updateTtsText(paragraph.id, prepared).getOrThrow()
-                    ready += paragraph.index
+            markerMutex.withLock {
+                TtsDiagnosticLog.append("Markup", "start document=$documentId")
+                try {
+                    val language = preferencesRepository.getPreferences().first().language
+                    val paragraphs = paragraphRepository.getParagraphsByDocumentId(documentId).first()
+                    val ready = paragraphs.filter { it.ttsText != null }.map { it.index }.toMutableSet()
                     update(documentId) {
-                        it.copy(markupDone = ready.size, markupReadyIndices = ready.toSet())
+                        it.copy(
+                            totalParagraphs = paragraphs.size,
+                            markupDone = ready.size,
+                            markupReadyIndices = ready.toSet(),
+                            markupRunning = ready.size < paragraphs.size,
+                            error = null
+                        )
                     }
-                }
 
-                update(documentId) {
-                    it.copy(
-                        markupDone = paragraphs.size,
-                        markupReadyIndices = paragraphs.map { p -> p.index }.toSet(),
-                        markupCurrentIndex = null,
-                        markupRunning = false
-                    )
-                }
-            }.onFailure { e ->
-                update(documentId) {
-                    it.copy(markupRunning = false, markupCurrentIndex = null, error = e.message ?: "Ошибка разметки")
+                    for (paragraph in paragraphs) {
+                        if (paragraph.index in ready) continue
+                        update(documentId) { it.copy(markupCurrentIndex = paragraph.index, markupRunning = true) }
+                        TtsDiagnosticLog.append("Markup", "paragraph=${paragraph.index} chars=${paragraph.text.length} start")
+                        val prepared = marker.prepare(paragraph.text, language)
+                        paragraphRepository.updateTtsText(paragraph.id, prepared).getOrThrow()
+                        ready += paragraph.index
+                        TtsDiagnosticLog.append("Markup", "paragraph=${paragraph.index} ready chars=${prepared.length}")
+                        update(documentId) {
+                            it.copy(markupDone = ready.size, markupReadyIndices = ready.toSet())
+                        }
+                    }
+
+                    update(documentId) {
+                        it.copy(
+                            markupDone = paragraphs.size,
+                            markupReadyIndices = paragraphs.map { p -> p.index }.toSet(),
+                            markupCurrentIndex = null,
+                            markupRunning = false
+                        )
+                    }
+                    TtsDiagnosticLog.append("Markup", "complete document=$documentId total=${paragraphs.size}")
+                } catch (e: Exception) {
+                    TtsDiagnosticLog.append("Markup", "error document=$documentId message=${e.message}")
+                    update(documentId) {
+                        it.copy(markupRunning = false, markupCurrentIndex = null, error = e.message ?: "Ошибка разметки")
+                    }
+                } finally {
+                    marker.releaseResources()
+                    TtsDiagnosticLog.append("Markup", "resources released document=$documentId")
                 }
             }
         }
@@ -99,58 +115,75 @@ class BookProcessingCoordinator(
         if (audioJobs[documentId]?.isActive == true) return
         startMarkup(documentId)
         audioJobs[documentId] = scope.launch(Dispatchers.IO) {
-            runCatching {
+            try {
                 val prefs = preferencesRepository.getPreferences().first()
                 if (!engine.canPreGenerate()) error("Для предгенерации выберите Piper или Supertonic")
 
                 val initial = paragraphRepository.getParagraphsByDocumentId(documentId).first()
-                val ready = mutableSetOf<Int>()
-                for (paragraph in initial) {
-                    if (engine.isParagraphAudioReady(paragraph, prefs.speechSpeed)) ready += paragraph.index
-                }
                 update(documentId) {
                     it.copy(
                         totalParagraphs = initial.size,
-                        audioRunning = ready.size < initial.size,
-                        audioDone = ready.size,
-                        audioReadyIndices = ready.toSet(),
+                        audioRunning = true,
+                        audioWaitingForMarkup = initial.any { p -> p.ttsText == null },
                         error = null
                     )
                 }
+                TtsDiagnosticLog.append("AudioJob", "queued document=$documentId total=${initial.size}")
 
-                for (index in initial.indices) {
-                    val paragraph = paragraphRepository.getParagraphsByDocumentId(documentId)
-                        .first { list -> list.getOrNull(index)?.ttsText != null }[index]
+                // Never keep RUAccent and the neural TTS model doing heavy work at the
+                // same time. A user can press Generate immediately; the request stays
+                // queued until the background markup job has finished.
+                markupJobs[documentId]?.join()
+                val paragraphs = paragraphRepository.getParagraphsByDocumentId(documentId).first()
+                if (paragraphs.any { it.ttsText == null }) {
+                    error("Разметка завершилась не полностью")
+                }
+                update(documentId) { it.copy(audioWaitingForMarkup = false) }
 
+                val ready = mutableSetOf<Int>()
+                for (paragraph in paragraphs) {
+                    if (engine.isParagraphAudioReady(paragraph, prefs.speechSpeed)) ready += paragraph.index
+                }
+                update(documentId) {
+                    it.copy(audioDone = ready.size, audioReadyIndices = ready.toSet())
+                }
+
+                for (paragraph in paragraphs) {
                     if (paragraph.index in ready || engine.isParagraphAudioReady(paragraph, prefs.speechSpeed)) {
                         ready += paragraph.index
-                        update(documentId) {
-                            it.copy(audioDone = ready.size, audioReadyIndices = ready.toSet())
-                        }
+                        update(documentId) { it.copy(audioDone = ready.size, audioReadyIndices = ready.toSet()) }
                         continue
                     }
 
                     update(documentId) { it.copy(audioCurrentIndex = paragraph.index, audioRunning = true) }
+                    TtsDiagnosticLog.append("AudioJob", "paragraph=${paragraph.index} generate start")
                     if (!engine.preGenerateParagraph(paragraph, prefs.speechSpeed)) {
                         error("Не удалось сгенерировать абзац ${paragraph.index + 1}")
                     }
                     ready += paragraph.index
-                    update(documentId) {
-                        it.copy(audioDone = ready.size, audioReadyIndices = ready.toSet())
-                    }
+                    TtsDiagnosticLog.append("AudioJob", "paragraph=${paragraph.index} ready")
+                    update(documentId) { it.copy(audioDone = ready.size, audioReadyIndices = ready.toSet()) }
                 }
 
                 update(documentId) {
                     it.copy(
-                        audioDone = initial.size,
-                        audioReadyIndices = initial.map { p -> p.index }.toSet(),
+                        audioDone = paragraphs.size,
+                        audioReadyIndices = paragraphs.map { p -> p.index }.toSet(),
                         audioCurrentIndex = null,
-                        audioRunning = false
+                        audioRunning = false,
+                        audioWaitingForMarkup = false
                     )
                 }
-            }.onFailure { e ->
+                TtsDiagnosticLog.append("AudioJob", "complete document=$documentId total=${paragraphs.size}")
+            } catch (e: Exception) {
+                TtsDiagnosticLog.append("AudioJob", "error document=$documentId message=${e.message}")
                 update(documentId) {
-                    it.copy(audioRunning = false, audioCurrentIndex = null, error = e.message ?: "Ошибка генерации аудио")
+                    it.copy(
+                        audioRunning = false,
+                        audioWaitingForMarkup = false,
+                        audioCurrentIndex = null,
+                        error = e.message ?: "Ошибка генерации аудио"
+                    )
                 }
             }
         }
@@ -180,8 +213,9 @@ class BookProcessingCoordinator(
     }
 
     private fun update(documentId: String, transform: (BookProcessingState) -> BookProcessingState) {
-        val current = _states.value
-        val previous = current[documentId] ?: BookProcessingState(documentId = documentId)
-        _states.value = current + (documentId to transform(previous))
+        _states.update { current ->
+            val previous = current[documentId] ?: BookProcessingState(documentId = documentId)
+            current + (documentId to transform(previous))
+        }
     }
 }
